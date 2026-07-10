@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { and, desc, eq } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   getApiCredential,
@@ -10,8 +11,69 @@ import {
   getNotificationSettings,
   upsertNotificationSettings,
 } from "../db";
+import { getDb } from "../db";
+import { botResources, botSettings } from "../../drizzle/schema";
+import { storagePut } from "../storage";
 
 export const settingsRouter = router({
+  getBotSettings: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new Error("Banco indisponível");
+    const [settings] = await db.select().from(botSettings).where(eq(botSettings.userId, ctx.user.id)).limit(1);
+    return settings || {
+      isEnabled: true, behaviorGeneral: "", knowledgeGeneral: "", knowledgeSpecific: "", pricingKnowledge: "",
+      fallbackMessage: "", humanHandoffRules: "", prohibitedTopics: "", businessHours: "",
+      audioUnderstandingEnabled: false, imageUnderstandingEnabled: false, mediaStorageEnabled: false,
+      responseDelayMs: 1500, maxResponseLength: 600,
+    };
+  }),
+
+  saveBotSettings: protectedProcedure.input(z.object({
+    isEnabled: z.boolean(), behaviorGeneral: z.string().max(20000), knowledgeGeneral: z.string().max(50000),
+    knowledgeSpecific: z.string().max(50000), pricingKnowledge: z.string().max(30000), fallbackMessage: z.string().max(5000),
+    humanHandoffRules: z.string().max(10000), prohibitedTopics: z.string().max(10000), businessHours: z.string().max(5000),
+    audioUnderstandingEnabled: z.boolean(), imageUnderstandingEnabled: z.boolean(), mediaStorageEnabled: z.boolean(),
+    responseDelayMs: z.number().int().min(0).max(15000), maxResponseLength: z.number().int().min(100).max(4000),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("Banco indisponível");
+    const [existing] = await db.select().from(botSettings).where(eq(botSettings.userId, ctx.user.id)).limit(1);
+    if (existing) await db.update(botSettings).set({ ...input, updatedAt: new Date() }).where(eq(botSettings.id, existing.id));
+    else await db.insert(botSettings).values({ userId: ctx.user.id, ...input });
+    return { success: true };
+  }),
+
+  listBotResources: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new Error("Banco indisponível");
+    return db.select().from(botResources).where(eq(botResources.userId, ctx.user.id)).orderBy(desc(botResources.createdAt));
+  }),
+
+  uploadBotResource: protectedProcedure.input(z.object({
+    name: z.string().min(1).max(255), resourceType: z.enum(["document", "image", "video", "audio", "link"]),
+    mimeType: z.string().max(120).optional(), base64: z.string().max(20_000_000).optional(), externalUrl: z.string().url().optional(),
+    description: z.string().max(5000).optional(), triggerKeywords: z.string().max(2000).optional(),
+  }).refine((data) => data.base64 || data.externalUrl, "Envie um arquivo ou URL")).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("Banco indisponível");
+    let url = input.externalUrl || "";
+    let storageKey: string | undefined;
+    if (input.base64) {
+      const data = Buffer.from(input.base64.replace(/^data:[^;]+;base64,/, ""), "base64");
+      const stored = await storagePut(`bot-resources/${ctx.user.id}/${input.name}`, data, input.mimeType);
+      url = stored.url;
+      storageKey = stored.key;
+    }
+    const [resource] = await db.insert(botResources).values({ userId: ctx.user.id, name: input.name, resourceType: input.resourceType, mimeType: input.mimeType, storageKey, url, description: input.description, triggerKeywords: input.triggerKeywords }).returning();
+    return resource;
+  }),
+
+  deleteBotResource: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("Banco indisponível");
+    await db.delete(botResources).where(and(eq(botResources.id, input.id), eq(botResources.userId, ctx.user.id)));
+    return { success: true };
+  }),
   /**
    * Obter credenciais de API
    */

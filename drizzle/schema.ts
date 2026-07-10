@@ -179,6 +179,48 @@ export const chatbotRules = pgTable(
 export type ChatbotRule = typeof chatbotRules.$inferSelect;
 export type InsertChatbotRule = typeof chatbotRules.$inferInsert;
 
+export const botSettings = pgTable("bot_settings", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().unique(),
+  isEnabled: boolean("isEnabled").default(true).notNull(),
+  behaviorGeneral: text("behaviorGeneral"),
+  knowledgeGeneral: text("knowledgeGeneral"),
+  knowledgeSpecific: text("knowledgeSpecific"),
+  pricingKnowledge: text("pricingKnowledge"),
+  fallbackMessage: text("fallbackMessage"),
+  humanHandoffRules: text("humanHandoffRules"),
+  prohibitedTopics: text("prohibitedTopics"),
+  businessHours: text("businessHours"),
+  audioUnderstandingEnabled: boolean("audioUnderstandingEnabled").default(false).notNull(),
+  imageUnderstandingEnabled: boolean("imageUnderstandingEnabled").default(false).notNull(),
+  mediaStorageEnabled: boolean("mediaStorageEnabled").default(false).notNull(),
+  responseDelayMs: integer("responseDelayMs").default(1500).notNull(),
+  maxResponseLength: integer("maxResponseLength").default(600).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const botResources = pgTable(
+  "bot_resources",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    resourceType: varchar("resourceType", { length: 40 }).notNull(),
+    mimeType: varchar("mimeType", { length: 120 }),
+    storageKey: varchar("storageKey", { length: 512 }),
+    url: varchar("url", { length: 1024 }).notNull(),
+    description: text("description"),
+    triggerKeywords: text("triggerKeywords"),
+    isActive: boolean("isActive").default(true).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({ userIdIdx: index("idx_bot_resources_user").on(table.userId) })
+);
+
+export type BotSetting = typeof botSettings.$inferSelect;
+export type BotResource = typeof botResources.$inferSelect;
+
 // Notification Settings - Configurações de notificação
 export const notificationSettings = pgTable(
   "notification_settings",

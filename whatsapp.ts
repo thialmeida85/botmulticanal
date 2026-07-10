@@ -14,7 +14,7 @@ import {
   processTemplate,
   validateResponse,
 } from "./server/services/chatbot";
-import { users } from "./drizzle/schema";
+import { botResources, botSettings, users } from "./drizzle/schema";
 import { eq } from "drizzle-orm";
 
 export const whatsappRouter = Router();
@@ -75,7 +75,8 @@ NOTA: Todos os pacotes possuem 5% de desconto para pagamento à vista via PIX. U
 async function getGroqResponse(
   message: string,
   firstName: string,
-  historyText: string
+  historyText: string,
+  userId: number
 ): Promise<string> {
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
   // Puxa a URL do painel ou usa o padrão da Groq/OpenAI
@@ -86,6 +87,22 @@ async function getGroqResponse(
     return `Olá ${firstName}! Recebi sua mensagem: "${message}".`;
 
   try {
+    let trainingContext = "";
+    const db = await getDb();
+    if (db) {
+      const [training] = await db.select().from(botSettings).where(eq(botSettings.userId, userId)).limit(1);
+      const resources = await db.select().from(botResources).where(eq(botResources.userId, userId));
+      if (training) trainingContext = `
+COMPORTAMENTO CONFIGURADO:\n${training.behaviorGeneral || ""}
+CONHECIMENTO GERAL:\n${training.knowledgeGeneral || ""}
+CONHECIMENTOS ESPECÍFICOS:\n${training.knowledgeSpecific || ""}
+PRECIFICAÇÃO:\n${training.pricingKnowledge || ""}
+TRANSFERÊNCIA PARA HUMANO:\n${training.humanHandoffRules || ""}
+ASSUNTOS PROIBIDOS:\n${training.prohibitedTopics || ""}
+HORÁRIO DE ATENDIMENTO:\n${training.businessHours || ""}
+FALLBACK:\n${training.fallbackMessage || ""}`;
+      if (resources.length) trainingContext += `\nRECURSOS DISPONÍVEIS:\n${resources.filter((r: any) => r.isActive).map((r: any) => `- ${r.name}: ${r.description || ""} | gatilhos: ${r.triggerKeywords || ""} | ${r.url}`).join("\n")}`;
+    }
     const response = await axios.post(
       `${GROQ_API_URL}/chat/completions`,
       {
@@ -100,6 +117,7 @@ ${historyText}
 
 BASE DE CONHECIMENTO (Use estas informações para responder as dúvidas do cliente):
 ${KNOWLEDGE_BASE}
+${trainingContext}
 
 MENSAGEM DE SISTEMA OBRIGATÓRIA (MÁXIMA PRIORIDADE):
 1. SE o HISTÓRICO RECENTE contiver APENAS UMA MENSAGEM (a primeira saudação do cliente), a sua PRIMEIRA E ÚNICA resposta DEVE SER EXATAMENTE esta frase abaixo e MAIS NADA:
@@ -287,6 +305,29 @@ whatsappRouter.get("/qrcode", async (req, res) => {
   }
 });
 
+whatsappRouter.post("/disconnect", async (_req, res) => {
+  try {
+    await axios.delete(`${EVOLUTION_URL}/instance/logout/${INSTANCE_NAME}`, { headers: { apikey: API_KEY } });
+    res.json({ success: true, state: "disconnected" });
+  } catch (error: any) {
+    console.error("❌ Erro ao desconectar instância:", error.response?.data || error.message);
+    res.status(error.response?.status || 502).json({ error: error.response?.data?.response?.message?.[0] || error.response?.data?.message || error.message });
+  }
+});
+
+whatsappRouter.get("/delivery-health", async (_req, res) => {
+  try {
+    const response = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${INSTANCE_NAME}`, { where: {} }, { headers: { apikey: API_KEY } });
+    const payload = response.data;
+    const records = Array.isArray(payload) ? payload : payload?.messages?.records || payload?.records || payload?.messages || payload?.data || [];
+    const outbound = (Array.isArray(records) ? records : []).filter((message: any) => message.key?.fromMe).slice(0, 20);
+    const statuses = outbound.map((message: any) => message.MessageUpdate?.[0]?.status || "PENDING");
+    res.json({ checked: outbound.length, errors: statuses.filter((status: string) => status === "ERROR").length, delivered: statuses.filter((status: string) => ["DELIVERY_ACK", "READ", "PLAYED"].includes(status)).length, pending: statuses.filter((status: string) => status === "PENDING").length, latestStatus: statuses[0] || "NO_DATA" });
+  } catch (error: any) {
+    res.status(502).json({ error: error.response?.data?.message || error.message });
+  }
+});
+
 // POST: Rota do Webhook para receber mensagens do WhatsApp (via Evolution API)
 whatsappRouter.post("/webhook", async (req, res) => {
   const body = req.body;
@@ -322,6 +363,9 @@ whatsappRouter.post("/webhook", async (req, res) => {
         let conversationId: number | undefined;
         let userId = 1; // Fallback
         let historyText = "";
+        let botEnabled = true;
+        let responseDelayMs = 1500;
+        let maxResponseLength = 600;
 
         // 1. SALVA A MENSAGEM NO BANCO DE DADOS (CRM)
         console.log(`[CRM] Salvando contato e mensagem no banco...`);
@@ -334,6 +378,10 @@ whatsappRouter.post("/webhook", async (req, res) => {
               .where(eq(users.role, "admin"))
               .limit(1);
             if (adminUser.length > 0) userId = adminUser[0].id;
+            const [persistedSettings] = await db.select().from(botSettings).where(eq(botSettings.userId, userId)).limit(1);
+            botEnabled = persistedSettings?.isEnabled !== false;
+            responseDelayMs = persistedSettings?.responseDelayMs ?? responseDelayMs;
+            maxResponseLength = persistedSettings?.maxResponseLength ?? maxResponseLength;
           }
 
           const contact = await getOrCreateContact(
@@ -392,7 +440,7 @@ whatsappRouter.post("/webhook", async (req, res) => {
 
           // Se for mensagem do cliente e o bot não estiver silenciado, aciona a IA
           if (!isFromMe) {
-            if (isBotMuted) {
+            if (isBotMuted || !botEnabled) {
               console.log(
                 "🔇 Bot está silenciado. Ignorando a resposta da IA."
               );
@@ -415,7 +463,7 @@ whatsappRouter.post("/webhook", async (req, res) => {
         }
 
         // 2. BUSCA REGRAS DO CHATBOT NO BANCO E RESPONDE (Apenas se for mensagem do cliente e bot ativo)
-        if (!isFromMe && !isBotMuted) {
+        if (!isFromMe && !isBotMuted && botEnabled) {
           try {
             let replyText = "";
 
@@ -436,7 +484,8 @@ whatsappRouter.post("/webhook", async (req, res) => {
               replyText = await getGroqResponse(
                 receivedText,
                 firstName,
-                historyText
+                historyText,
+                userId
               );
             }
 
@@ -459,6 +508,9 @@ whatsappRouter.post("/webhook", async (req, res) => {
                 .replace(/\[ABRIR_CHAMADO:\s*(.+?)\]/i, "")
                 .trim();
             }
+
+            if (replyText.length > maxResponseLength) replyText = `${replyText.slice(0, maxResponseLength - 3)}...`;
+            if (responseDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
 
             // 4. SEPARA AS MENSAGENS PELA TAG [QUEBRA] E ENVIA UMA POR UMA
             const replyMessages = replyText.split("[QUEBRA]");
