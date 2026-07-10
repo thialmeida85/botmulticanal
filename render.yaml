@@ -62,7 +62,7 @@ services:
     healthCheckPath: /health
 
     # Auto-deploy from GitHub
-    repo: https://github.com/agenciaverticale-bot/botmulticanal.git
+    repo: https://github.com/thialmeida85/botmulticanal.git
     branch: main
     autoDeploy: true
 
