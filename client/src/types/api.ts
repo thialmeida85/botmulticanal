@@ -5,6 +5,11 @@ export interface Contact {
   platform: "whatsapp" | "instagram";
   name: string | null;
   phoneNumber: string | null;
+  company?: string | null;
+  email?: string | null;
+  city?: string | null;
+  state?: string | null;
+  leadScore?: number | null;
   instagramHandle: string | null;
   profilePicture: string | null;
   lastInteractionAt: Date | null;
@@ -26,6 +31,8 @@ export interface Conversation {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export type ConversationWithContact = Conversation & { contact?: Contact };
 
 export interface Message {
   id: number;

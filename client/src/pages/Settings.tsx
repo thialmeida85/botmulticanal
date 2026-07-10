@@ -222,7 +222,7 @@ export default function Settings() {
             {/* Existing Rules */}
             <div className="space-y-3">
               <h3 className="font-medium text-gray-900">Regras Ativas</h3>
-              {chatbotRules.data?.map((rule) => (
+              {chatbotRules.data?.map((rule: any) => (
                 <Card key={rule.id} className="border-0 shadow-sm">
                   <CardContent className="pt-6">
                     <div className="flex items-start justify-between gap-4">

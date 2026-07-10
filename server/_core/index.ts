@@ -10,7 +10,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import healthRouter from "./health";
 import { instagramRouter } from "../../instagram";
-import { whatsappRouter } from "../../whatsapp";
+import { configureEvolutionWebhook, whatsappRouter } from "../../whatsapp";
 import { authRouter } from "../../auth";
 import axios from "axios";
 
@@ -73,6 +73,10 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+
+    configureEvolutionWebhook()
+      .then(() => console.log("✅ Webhook da Evolution configurado na inicialização"))
+      .catch((error: any) => console.error("❌ Falha ao configurar webhook da Evolution:", error.response?.data || error.message));
 
     // PING AUTOMÁTICO: Evita que a Evolution API "durma" no Render gratuito
     // Faz uma requisição silenciosa a cada 10 minutos (600.000 ms)

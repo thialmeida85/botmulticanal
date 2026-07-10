@@ -9,7 +9,7 @@ export function BroadcastForm() {
   const [audienceFilter, setAudienceFilter] = useState<'all' | 'whatsapp' | 'instagram'>('all');
   
   // Busca contatos reais do banco de dados!
-  const contactsQuery = trpc.messages.getContacts.useQuery();
+  const contactsQuery = trpc.messages.getContacts.useQuery({});
   const allContacts = contactsQuery.data || [];
   
   const filteredContacts = audienceFilter === 'all' 

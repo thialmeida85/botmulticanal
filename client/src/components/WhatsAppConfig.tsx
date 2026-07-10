@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { QrCode, RefreshCw, Smartphone, VolumeX, Volume2, CheckCircle2 } from 'lucide-react';
+import { QrCode, RefreshCw, Smartphone, VolumeX, Volume2, CheckCircle2, Users } from 'lucide-react';
 import axios from 'axios';
 
 export function WhatsAppConfig() {
@@ -8,6 +8,8 @@ export function WhatsAppConfig() {
   const [error, setError] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [status, setStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+  const [syncingContacts, setSyncingContacts] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   useEffect(() => {
     axios.get('/api/whatsapp/mute').then(res => setIsMuted(res.data.isMuted)).catch(() => {});
@@ -57,6 +59,19 @@ export function WhatsAppConfig() {
       setError(err.response?.data?.error || 'Não foi possível carregar o QR Code. Tente novamente.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const syncContacts = async () => {
+    setSyncingContacts(true);
+    setSyncResult(null);
+    try {
+      const response = await axios.post('/api/whatsapp/sync-contacts');
+      setSyncResult(`${response.data.imported} contatos sincronizados com o CRM.`);
+    } catch (err: any) {
+      setSyncResult(err.response?.data?.error || 'Falha ao sincronizar contatos.');
+    } finally {
+      setSyncingContacts(false);
     }
   };
 
@@ -116,6 +131,15 @@ export function WhatsAppConfig() {
         )}
         {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
       </div>
+      {status === 'connected' && (
+        <div className="mt-4">
+          <button onClick={syncContacts} disabled={syncingContacts} className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-60">
+            {syncingContacts ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Users className="h-5 w-5" />}
+            {syncingContacts ? 'Sincronizando...' : 'Sincronizar contatos do WhatsApp'}
+          </button>
+          {syncResult && <p className="mt-2 text-center text-sm text-slate-600">{syncResult}</p>}
+        </div>
+      )}
     </div>
   );
 }

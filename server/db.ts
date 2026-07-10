@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, like, gte, lte } from "drizzle-orm";
+import { eq, and, or, desc, asc, like, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
@@ -108,14 +108,22 @@ export async function getUserByOpenId(openId: string) {
 }
 
 // API Credentials
-export async function getApiCredential(userId: number, platform: "whatsapp" | "instagram") {
+export async function getApiCredential(
+  userId: number,
+  platform: "whatsapp" | "instagram"
+) {
   const db = await getDb();
   if (!db) return undefined;
 
   const result = await db
     .select()
     .from(apiCredentials)
-    .where(and(eq(apiCredentials.userId, userId), eq(apiCredentials.platform, platform)))
+    .where(
+      and(
+        eq(apiCredentials.userId, userId),
+        eq(apiCredentials.platform, platform)
+      )
+    )
     .limit(1);
 
   return result.length > 0 ? result[0] : undefined;
@@ -124,7 +132,12 @@ export async function getApiCredential(userId: number, platform: "whatsapp" | "i
 export async function upsertApiCredential(
   userId: number,
   platform: "whatsapp" | "instagram",
-  data: { token: string; secretKey?: string; phoneNumberId?: string; businessAccountId?: string }
+  data: {
+    token: string;
+    secretKey?: string;
+    phoneNumberId?: string;
+    businessAccountId?: string;
+  }
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -159,7 +172,22 @@ export async function getOrCreateContact(
   userId: number,
   externalId: string,
   platform: "whatsapp" | "instagram",
-  data?: { name?: string; phoneNumber?: string; instagramHandle?: string; profilePicture?: string }
+  data?: {
+    name?: string;
+    phoneNumber?: string;
+    company?: string;
+    cnpj?: string;
+    segment?: string;
+    city?: string;
+    state?: string;
+    email?: string;
+    leadStatus?: string;
+    leadScore?: number;
+    source?: string;
+    customMessage?: string;
+    instagramHandle?: string;
+    profilePicture?: string;
+  }
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -167,13 +195,13 @@ export async function getOrCreateContact(
   const existing = await db
     .select()
     .from(contacts)
-    .where(
-      and(
-        eq(contacts.userId, userId),
-        eq(contacts.externalId, externalId),
-        eq(contacts.platform, platform)
-      )
-    )
+    .where(and(
+      eq(contacts.userId, userId),
+      eq(contacts.platform, platform),
+      platform === "whatsapp" && data?.phoneNumber
+        ? or(eq(contacts.externalId, externalId), eq(contacts.phoneNumber, data.phoneNumber))
+        : eq(contacts.externalId, externalId)
+    ))
     .limit(1);
 
   if (existing.length > 0) {
@@ -183,6 +211,16 @@ export async function getOrCreateContact(
         .set({
           name: data.name || existing[0].name,
           phoneNumber: data.phoneNumber || existing[0].phoneNumber,
+          company: data.company || existing[0].company,
+          cnpj: data.cnpj || existing[0].cnpj,
+          segment: data.segment || existing[0].segment,
+          city: data.city || existing[0].city,
+          state: data.state || existing[0].state,
+          email: data.email || existing[0].email,
+          leadStatus: data.leadStatus || existing[0].leadStatus,
+          leadScore: data.leadScore ?? existing[0].leadScore,
+          source: data.source || existing[0].source,
+          customMessage: data.customMessage || existing[0].customMessage,
           instagramHandle: data.instagramHandle || existing[0].instagramHandle,
           profilePicture: data.profilePicture || existing[0].profilePicture,
           updatedAt: new Date(),
@@ -200,10 +238,20 @@ export async function getOrCreateContact(
       platform,
       name: data?.name,
       phoneNumber: data?.phoneNumber,
+      company: data?.company,
+      cnpj: data?.cnpj,
+      segment: data?.segment,
+      city: data?.city,
+      state: data?.state,
+      email: data?.email,
+      leadStatus: data?.leadStatus,
+      leadScore: data?.leadScore,
+      source: data?.source,
+      customMessage: data?.customMessage,
       instagramHandle: data?.instagramHandle,
       profilePicture: data?.profilePicture,
     })
-    .$returningId();
+    .returning({ id: contacts.id });
 
   return {
     id: result[0].id,
@@ -212,6 +260,16 @@ export async function getOrCreateContact(
     platform,
     name: data?.name,
     phoneNumber: data?.phoneNumber,
+    company: data?.company,
+    cnpj: data?.cnpj,
+    segment: data?.segment,
+    city: data?.city,
+    state: data?.state,
+    email: data?.email,
+    leadStatus: data?.leadStatus,
+    leadScore: data?.leadScore,
+    source: data?.source,
+    customMessage: data?.customMessage,
     instagramHandle: data?.instagramHandle,
     profilePicture: data?.profilePicture,
     lastInteractionAt: null,
@@ -221,12 +279,19 @@ export async function getOrCreateContact(
   };
 }
 
-export async function getContactsByUserId(userId: number, platform?: "whatsapp" | "instagram") {
+export async function getContactsByUserId(
+  userId: number,
+  platform?: "whatsapp" | "instagram"
+) {
   const db = await getDb();
   if (!db) return [];
 
-  const userObj = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const isAdmin = userObj.length > 0 && userObj[0].role === 'admin';
+  const userObj = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const isAdmin = userObj.length > 0 && userObj[0].role === "admin";
 
   const conditions = [];
   if (!isAdmin) {
@@ -276,7 +341,7 @@ export async function getOrCreateConversation(
       platform,
       status: "open",
     })
-    .$returningId();
+    .returning({ id: conversations.id });
 
   return {
     id: result[0].id,
@@ -293,12 +358,19 @@ export async function getOrCreateConversation(
   };
 }
 
-export async function getConversationsByUserId(userId: number, status?: "open" | "closed" | "pending") {
+export async function getConversationsByUserId(
+  userId: number,
+  status?: "open" | "closed" | "pending"
+) {
   const db = await getDb();
   if (!db) return [];
 
-  const userObj = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const isAdmin = userObj.length > 0 && userObj[0].role === 'admin';
+  const userObj = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const isAdmin = userObj.length > 0 && userObj[0].role === "admin";
 
   const conditions = [];
   if (!isAdmin) {
@@ -315,7 +387,10 @@ export async function getConversationsByUserId(userId: number, status?: "open" |
     .orderBy(desc(conversations.createdAt));
 }
 
-export async function updateConversationUnreadCount(conversationId: number, count: number) {
+export async function updateConversationUnreadCount(
+  conversationId: number,
+  count: number
+) {
   const db = await getDb();
   if (!db) return;
 
@@ -347,18 +422,24 @@ export async function saveMessage(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const result = await db.insert(messages).values(data).$returningId();
-  
+  const result = await db
+    .insert(messages)
+    .values(data)
+    .returning({ id: messages.id });
+
   // Atualiza a data da última mensagem para a conversa aparecer no topo do Dashboard
   await db
     .update(conversations)
     .set({ lastMessageAt: new Date(), updatedAt: new Date() })
     .where(eq(conversations.id, data.conversationId));
-    
+
   return result[0].id;
 }
 
-export async function getMessagesByConversation(conversationId: number, limit = 50) {
+export async function getMessagesByConversation(
+  conversationId: number,
+  limit = 50
+) {
   const db = await getDb();
   if (!db) return [];
 
@@ -371,27 +452,29 @@ export async function getMessagesByConversation(conversationId: number, limit = 
     .then((res: any[]) => res.reverse()); // Inverte para manter a ordem cronológica para a IA
 }
 
-export async function updateMessageStatus(messageId: number, status: "sent" | "delivered" | "read" | "failed") {
+export async function updateMessageStatus(
+  messageId: number,
+  status: "sent" | "delivered" | "read" | "failed"
+) {
   const db = await getDb();
   if (!db) return;
 
-  await db
-    .update(messages)
-    .set({ status })
-    .where(eq(messages.id, messageId));
+  await db.update(messages).set({ status }).where(eq(messages.id, messageId));
 }
 
 export async function getUnreadMessageCount(userId: number) {
   const db = await getDb();
   if (!db) return 0;
 
-  const userObj = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const isAdmin = userObj.length > 0 && userObj[0].role === 'admin';
+  const userObj = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const isAdmin = userObj.length > 0 && userObj[0].role === "admin";
 
-  const conditions = [
-    eq(messages.direction, "inbound"),
-  ];
-  
+  const conditions = [eq(messages.direction, "inbound")];
+
   if (!isAdmin) {
     conditions.push(eq(messages.userId, userId));
   }
@@ -405,11 +488,17 @@ export async function getUnreadMessageCount(userId: number) {
 }
 
 // Chatbot Rules
-export async function getChatbotRules(userId: number, platform?: "whatsapp" | "instagram" | "both") {
+export async function getChatbotRules(
+  userId: number,
+  platform?: "whatsapp" | "instagram" | "both"
+) {
   const db = await getDb();
   if (!db) return [];
 
-  const conditions = [eq(chatbotRules.userId, userId), eq(chatbotRules.isActive, true)];
+  const conditions = [
+    eq(chatbotRules.userId, userId),
+    eq(chatbotRules.isActive, true),
+  ];
 
   if (platform) {
     conditions.push(
@@ -438,7 +527,10 @@ export async function saveChatbotRule(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const result = await db.insert(chatbotRules).values(data).$returningId();
+  const result = await db
+    .insert(chatbotRules)
+    .values(data)
+    .returning({ id: chatbotRules.id });
   return result[0].id;
 }
 
@@ -456,10 +548,7 @@ export async function updateChatbotRule(
   const db = await getDb();
   if (!db) return;
 
-  await db
-    .update(chatbotRules)
-    .set(data)
-    .where(eq(chatbotRules.id, ruleId));
+  await db.update(chatbotRules).set(data).where(eq(chatbotRules.id, ruleId));
 }
 
 export async function deleteChatbotRule(ruleId: number) {
@@ -483,7 +572,10 @@ export async function getNotificationSettings(userId: number) {
   return result.length > 0 ? result[0] : null;
 }
 
-export async function upsertNotificationSettings(userId: number, data: Partial<typeof notificationSettings.$inferInsert>) {
+export async function upsertNotificationSettings(
+  userId: number,
+  data: Partial<typeof notificationSettings.$inferInsert>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -514,7 +606,10 @@ export async function saveNotificationLog(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const result = await db.insert(notificationLogs).values(data).$returningId();
+  const result = await db
+    .insert(notificationLogs)
+    .values(data)
+    .returning({ id: notificationLogs.id });
   return result[0].id;
 }
 
@@ -533,14 +628,19 @@ export async function getNotificationLogs(userId: number, limit = 20) {
 // ============================================================================
 // CHAMADOS (TICKETS)
 // ============================================================================
-export async function createSupportTicket(data: { userId: number; contactId: number; subject: string; description: string }) {
+export async function createSupportTicket(data: {
+  userId: number;
+  contactId: number;
+  subject: string;
+  description: string;
+}) {
   const db = await getDb();
   if (!db) return;
   const ticketCode = `TKT-${Math.floor(1000 + Math.random() * 9000)}-${Date.now().toString().slice(-4)}`;
   await db.insert(supportTickets).values({
     ...data,
     ticketCode,
-    status: 'open'
+    status: "open",
   });
   return ticketCode;
 }

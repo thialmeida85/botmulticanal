@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { supportTickets, conversations } from "../../drizzle/schema";
-import { eq, desc } from "drizzle-orm";
+import { supportTickets, conversations, contacts } from "../../drizzle/schema";
+import { and, eq, desc } from "drizzle-orm";
 import {
   getConversationsByUserId,
   getMessagesByConversation,
@@ -14,6 +14,7 @@ import {
   getNotificationSettings,
 } from "../db";
 import { generateResponseSuggestion } from "../services/llm";
+import { sendInstagramMessage } from "../services/messaging";
 
 export const messagesRouter = router({
   /**
@@ -73,10 +74,34 @@ export const messagesRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       try {
-        // TODO: Obter credenciais da API
-        // TODO: Enviar mensagem via API externa
+        const db = await getDb();
+        if (!db) throw new Error("Banco de dados indisponível");
+        const [conversation] = await db
+          .select({ conversation: conversations, contact: contacts })
+          .from(conversations)
+          .innerJoin(contacts, eq(contacts.id, conversations.contactId))
+          .where(and(eq(conversations.id, input.conversationId), eq(conversations.userId, ctx.user.id)))
+          .limit(1);
+        if (!conversation) throw new Error("Conversa não encontrada");
+        if (conversation.contact.id !== input.contactId || conversation.conversation.platform !== input.platform) {
+          throw new Error("Contato ou canal inválido para esta conversa");
+        }
 
-        // Salvar mensagem no banco
+        if (input.platform === "whatsapp") {
+          const baseUrl = (process.env.EVOLUTION_API_URL || "").replace(/\/+$/, "");
+          const apiKey = process.env.EVOLUTION_API_KEY;
+          const instance = process.env.EVOLUTION_INSTANCE_NAME || "bot-verticale";
+          if (!baseUrl || !apiKey || !conversation.contact.phoneNumber) throw new Error("Evolution API não configurada");
+          const response = await fetch(`${baseUrl}/message/sendText/${instance}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", apikey: apiKey },
+            body: JSON.stringify({ number: conversation.contact.phoneNumber, text: input.content }),
+          });
+          if (!response.ok) throw new Error(`Evolution API retornou ${response.status}: ${await response.text()}`);
+        } else {
+          await sendInstagramMessage(ctx.user.id, conversation.contact.externalId, input.content);
+        }
+
         const messageId = await saveMessage({
           conversationId: input.conversationId,
           contactId: input.contactId,
@@ -183,6 +208,16 @@ export const messagesRouter = router({
             phoneNumber: z.string(),
             platform: z.enum(["whatsapp", "instagram"]),
             externalId: z.string(),
+            company: z.string().optional(),
+            cnpj: z.string().optional(),
+            segment: z.string().optional(),
+            city: z.string().optional(),
+            state: z.string().optional(),
+            email: z.string().optional(),
+            leadStatus: z.string().optional(),
+            leadScore: z.number().int().min(0).max(100).optional(),
+            source: z.string().optional(),
+            customMessage: z.string().optional(),
           })
         ),
       })
@@ -194,6 +229,16 @@ export const messagesRouter = router({
           await getOrCreateContact(ctx.user.id, contact.externalId, contact.platform, {
             name: contact.name,
             phoneNumber: contact.phoneNumber,
+            company: contact.company,
+            cnpj: contact.cnpj,
+            segment: contact.segment,
+            city: contact.city,
+            state: contact.state,
+            email: contact.email,
+            leadStatus: contact.leadStatus,
+            leadScore: contact.leadScore,
+            source: contact.source,
+            customMessage: contact.customMessage,
           });
           imported++;
         } catch (error) {

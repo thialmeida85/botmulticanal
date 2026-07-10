@@ -11,6 +11,7 @@ export const messageStatusEnum = pgEnum("message_status", ["sent", "delivered", 
 export const notificationTypeEnum = pgEnum("notification_type", ["email", "in_app"]);
 export const campaignStatusEnum = pgEnum("campaign_status", ["draft", "scheduled", "running", "paused", "completed", "failed"]);
 export const ticketStatusEnum = pgEnum("ticket_status", ["open", "in_progress", "resolved", "closed"]);
+export const dealStatusEnum = pgEnum("deal_status", ["open", "won", "lost"]);
 
 /**
  * Core user table backing auth flow.
@@ -71,6 +72,16 @@ export const contacts = pgTable(
     platform: platformEnum("platform").notNull(),
     name: varchar("name", { length: 255 }),
     phoneNumber: varchar("phoneNumber", { length: 20 }),
+    company: varchar("company", { length: 255 }),
+    cnpj: varchar("cnpj", { length: 14 }),
+    segment: varchar("segment", { length: 255 }),
+    city: varchar("city", { length: 255 }),
+    state: varchar("state", { length: 2 }),
+    email: varchar("email", { length: 320 }),
+    leadStatus: varchar("leadStatus", { length: 50 }),
+    leadScore: integer("leadScore"),
+    source: varchar("source", { length: 255 }),
+    customMessage: text("customMessage"),
     instagramHandle: varchar("instagramHandle", { length: 255 }),
     profilePicture: varchar("profilePicture", { length: 512 }),
     lastInteractionAt: timestamp("lastInteractionAt"),
@@ -251,6 +262,89 @@ export const supportTickets = pgTable("support_tickets", {
 
 export type SupportTicket = typeof supportTickets.$inferSelect;
 export type InsertSupportTicket = typeof supportTickets.$inferInsert;
+
+// Tags compartilhadas entre Atendimento, CRM e Funil
+export const tags = pgTable(
+  "tags",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    name: varchar("name", { length: 80 }).notNull(),
+    color: varchar("color", { length: 20 }).default("#2563eb").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({ userIdIdx: index("idx_tags_user_id").on(table.userId) })
+);
+
+export const contactTags = pgTable(
+  "contact_tags",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    contactId: integer("contactId").notNull(),
+    tagId: integer("tagId").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    contactIdx: index("idx_contact_tags_contact").on(table.contactId),
+    tagIdx: index("idx_contact_tags_tag").on(table.tagId),
+  })
+);
+
+export const salesPipelines = pgTable(
+  "sales_pipelines",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    name: varchar("name", { length: 120 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => ({ userIdIdx: index("idx_sales_pipelines_user").on(table.userId) })
+);
+
+export const pipelineStages = pgTable(
+  "pipeline_stages",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    pipelineId: integer("pipelineId").notNull(),
+    name: varchar("name", { length: 120 }).notNull(),
+    color: varchar("color", { length: 20 }).default("#64748b").notNull(),
+    position: integer("position").default(0).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({ pipelineIdx: index("idx_pipeline_stages_pipeline").on(table.pipelineId) })
+);
+
+export const deals = pgTable(
+  "deals",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    pipelineId: integer("pipelineId").notNull(),
+    stageId: integer("stageId").notNull(),
+    contactId: integer("contactId").notNull(),
+    conversationId: integer("conversationId"),
+    title: varchar("title", { length: 255 }).notNull(),
+    value: integer("value").default(0).notNull(),
+    position: integer("position").default(0).notNull(),
+    status: dealStatusEnum("status").default("open").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    pipelineIdx: index("idx_deals_pipeline").on(table.pipelineId),
+    stageIdx: index("idx_deals_stage").on(table.stageId),
+    contactIdx: index("idx_deals_contact").on(table.contactId),
+  })
+);
+
+export type Tag = typeof tags.$inferSelect;
+export type SalesPipeline = typeof salesPipelines.$inferSelect;
+export type PipelineStage = typeof pipelineStages.$inferSelect;
+export type Deal = typeof deals.$inferSelect;
 
 // ============================================================================
 // RELACIONAMENTOS (Obrigatório para o Dashboard conseguir cruzar dados e exibir)

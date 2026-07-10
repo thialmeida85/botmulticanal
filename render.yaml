@@ -3,10 +3,10 @@ services:
     name: botmulticanal
     runtime: docker
     plan: standard
-    
+
     # Build configuration
     dockerfilePath: ./Dockerfile
-    
+
     # Environment variables
     envVars:
       - key: NODE_ENV
@@ -41,28 +41,39 @@ services:
         sync: false
       - key: VITE_FRONTEND_FORGE_API_KEY
         sync: false
-    
+      - key: EVOLUTION_API_URL
+        sync: false
+      - key: EVOLUTION_API_KEY
+        sync: false
+      - key: EVOLUTION_INSTANCE_NAME
+        value: bot-verticale
+      - key: PUBLIC_APP_URL
+        value: https://crm.agenciaverticale.com.br
+      - key: GROQ_API_URL
+        value: https://api.groq.com/openai/v1
+      - key: GROQ_API_KEY
+        sync: false
+
     # Build settings
     buildCommand: pnpm build
     startCommand: node dist/index.js
-    
+
     # Health check
     healthCheckPath: /health
-    
+
     # Auto-deploy from GitHub
-    repo: https://github.com/YOUR_USERNAME/botmulticanal
+    repo: https://github.com/agenciaverticale-bot/botmulticanal.git
     branch: main
     autoDeploy: true
-    
+
     # Scaling
     numInstances: 1
-    
+
     # Disk
     disk:
       name: botmulticanal_disk
       mountPath: /data
       sizeGB: 10
-
 # Uncomment below if you want to add a PostgreSQL database
 # databases:
 #   - name: botmulticanal_db

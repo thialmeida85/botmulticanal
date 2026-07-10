@@ -17,6 +17,8 @@ import ConversationViewer from "@/components/ConversationViewer";
 import { WhatsAppConfig } from "@/components/WhatsAppConfig";
 import { BroadcastForm } from "@/components/BroadcastForm";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { normalizeCsvHeader, parseCsv } from "@/lib/csv";
+import SalesFunnel from "@/components/SalesFunnel";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -33,7 +35,7 @@ export default function Dashboard() {
       case "crm":
         return <CRMView />;
       case "funnel":
-        return <FunnelView />;
+        return <SalesFunnel />;
       case "broadcast":
         return <BroadcastForm />;
       case "settings":
@@ -153,6 +155,8 @@ function ChatView({ conversations }: { conversations: any }) {
     );
   }
 
+  const selected = conversations.find((conversation: any) => conversation.id === selectedConversation);
+
   return (
     <div className="h-[calc(100vh-4rem)] md:h-[calc(100vh-4rem)] grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-1 h-full flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -169,8 +173,8 @@ function ChatView({ conversations }: { conversations: any }) {
         </div>
       </div>
       <div className="lg:col-span-2 h-full bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        {selectedConversation ? (
-          <ConversationViewer conversationId={selectedConversation} />
+        {selected ? (
+          <ConversationViewer conversation={selected} />
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-slate-400 bg-slate-50/30">
             <MessageCircle className="w-16 h-16 mb-4 text-slate-300" />
@@ -217,7 +221,7 @@ function CRMView() {
   const [loading, setLoading] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [isTicketDialogOpen, setIsTicketDialogOpen] = useState(false);
-  const contactsQuery = trpc.messages.getContacts.useQuery(undefined, { refetchInterval: 5000 });
+  const contactsQuery = trpc.messages.getContacts.useQuery({}, { refetchInterval: 5000 });
   const importContactsMutation = trpc.messages.importContacts.useMutation();
   
   const contactTicketsQuery = trpc.messages.getContactTickets.useQuery(
@@ -236,45 +240,56 @@ function CRMView() {
     reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        // Divide o arquivo em linhas e ignora vazias
-        const lines = text.split('\n').map(line => line.trim()).filter(line => line);
-        if (lines.length < 2) throw new Error("O arquivo parece estar vazio ou sem contatos.");
-        
+        const rows = parseCsv(text);
+        if (rows.length < 2) throw new Error("O arquivo parece estar vazio ou sem contatos.");
+
+        const headers = rows[0].map(normalizeCsvHeader);
+        const getValue = (columns: string[], ...aliases: string[]) => {
+          const index = aliases.map(normalizeCsvHeader).map((alias) => headers.indexOf(alias)).find((item) => item >= 0);
+          return index === undefined ? "" : (columns[index] || "").trim();
+        };
+        if (!headers.includes("nome") || !headers.includes("telefone")) {
+          throw new Error('O CSV precisa ter, no mínimo, as colunas "Nome" e "Telefone".');
+        }
+
         const contactsToImport = [];
-        // Pula o cabeçalho (i = 1)
-        for (let i = 1; i < lines.length; i++) {
-          const columns = lines[i].split(',');
-          if (columns.length >= 3) {
-            // Coluna 0: Nome, Coluna 1: Sobrenome (Removemos aspas se houver)
-            const firstName = columns[0].replace(/"/g, '') || '';
-            const lastName = columns[1].replace(/"/g, '') || '';
-            const name = `${firstName} ${lastName}`.trim();
-            
-            // Coluna 2: WhatsApp (Removemos tudo que não for dígito como espaços, + e -)
-            let phone = columns[2].replace(/\D/g, ''); 
-            
-            if (phone.length >= 8) {
-              // Se não tiver código do país e for um número padrão brasileiro (DDD + Numero), coloca o 55
-              if (!phone.startsWith('55') && phone.length <= 11) {
-                phone = `55${phone}`;
-              }
-              contactsToImport.push({
-                name: name || "Desconhecido",
-                phoneNumber: phone,
-                platform: 'whatsapp' as const,
-                externalId: `${phone}@s.whatsapp.net` // Padrão que o WhatsApp usa
-              });
-            }
+        let ignored = 0;
+        for (const columns of rows.slice(1)) {
+          const name = getValue(columns, "Nome", "Nome completo") || "Desconhecido";
+          let phone = getValue(columns, "Telefone", "WhatsApp", "Celular").replace(/\D/g, "");
+          if (!phone.startsWith("55") && phone.length >= 10 && phone.length <= 11) phone = `55${phone}`;
+          if (phone.length < 12 || phone.length > 13) {
+            ignored++;
+            continue;
           }
+
+          const scoreText = getValue(columns, "Score", "Pontuação").replace(",", ".");
+          const parsedScore = Number(scoreText);
+          contactsToImport.push({
+            name,
+            phoneNumber: phone,
+            platform: "whatsapp" as const,
+            externalId: phone,
+            company: getValue(columns, "Empresa", "Razão social") || undefined,
+            cnpj: getValue(columns, "CNPJ").replace(/\D/g, "") || undefined,
+            segment: getValue(columns, "Segmento") || undefined,
+            city: getValue(columns, "Cidade") || undefined,
+            state: getValue(columns, "Estado", "UF").toUpperCase() || undefined,
+            email: getValue(columns, "E-mail", "Email") || undefined,
+            leadStatus: getValue(columns, "Status") || undefined,
+            leadScore: Number.isFinite(parsedScore) ? Math.max(0, Math.min(100, Math.round(parsedScore))) : undefined,
+            source: getValue(columns, "Origem") || undefined,
+            customMessage: getValue(columns, "Mensagem personalizada", "Mensagem") || undefined,
+          });
         }
         
         if (contactsToImport.length === 0) {
-          throw new Error("Nenhum número de WhatsApp válido foi encontrado na coluna C.");
+          throw new Error('Nenhum número de WhatsApp válido foi encontrado na coluna "Telefone".');
         }
 
         const result = await importContactsMutation.mutateAsync({ contacts: contactsToImport });
         
-        setStatus(`✅ Sucesso! ${result.imported} leads foram importados e higienizados. Eles já estão disponíveis para campanhas.`);
+        setStatus(`✅ Sucesso! ${result.imported} leads foram importados e higienizados.${ignored ? ` ${ignored} linha(s) sem telefone válido foram ignoradas.` : ""}`);
         contactsQuery.refetch(); // Recarrega a tabela na hora
       } catch (err: any) {
         setStatus(`❌ Erro ao processar o arquivo: ${err.message}`);
@@ -300,8 +315,8 @@ function CRMView() {
           <p className="text-slate-500">Gerencie seus clientes e leads capturados</p>
         </div>
         <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm whitespace-nowrap">
-          {loading ? "Importando..." : "Importar Planilha (CSV/Excel)"}
-          <input type="file" accept=".csv, .xlsx" className="hidden" onChange={handleFileUpload} disabled={loading} />
+          {loading ? "Importando..." : "Importar Contatos (CSV)"}
+          <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleFileUpload} disabled={loading} />
         </label>
       </div>
       
@@ -312,12 +327,16 @@ function CRMView() {
       )}
 
       <div className="flex-1 overflow-auto border border-slate-100 rounded-xl">
-        <table className="w-full text-left border-collapse min-w-[600px]">
+        <table className="w-full text-left border-collapse min-w-[1100px]">
           <thead className="bg-slate-50 sticky top-0 z-10">
             <tr className="text-slate-500 text-sm border-b border-slate-200">
               <th className="p-4 font-semibold">Código</th>
               <th className="p-4 font-semibold">Nome</th>
               <th className="p-4 font-semibold">Telefone / ID</th>
+              <th className="p-4 font-semibold">Empresa</th>
+              <th className="p-4 font-semibold">Localidade</th>
+              <th className="p-4 font-semibold">E-mail</th>
+              <th className="p-4 font-semibold text-center">Score</th>
               <th className="p-4 font-semibold text-center">Interações</th>
               <th className="p-4 font-semibold text-center">Chamados</th>
               <th className="p-4 font-semibold">Data de Cadastro</th>
@@ -326,13 +345,17 @@ function CRMView() {
           </thead>
           <tbody>
             {contactsQuery.isLoading && (
-              <tr><td colSpan={7} className="p-8 text-center text-slate-500">Buscando contatos...</td></tr>
+              <tr><td colSpan={11} className="p-8 text-center text-slate-500">Buscando contatos...</td></tr>
             )}
             {contactsQuery.data?.map((contact: any) => (
               <tr key={contact.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                 <td className="p-4 font-medium text-slate-500 text-sm">{contact.customerCode}</td>
                 <td className="p-4 font-medium text-slate-800">{contact.name || "Desconhecido"}</td>
                 <td className="p-4 text-slate-600">{contact.phoneNumber || contact.externalId}</td>
+                <td className="p-4 text-slate-600"><div>{contact.company || "-"}</div><div className="text-xs text-slate-400">{contact.segment || ""}</div></td>
+                <td className="p-4 text-slate-600">{[contact.city, contact.state].filter(Boolean).join("/") || "-"}</td>
+                <td className="p-4 text-slate-600">{contact.email || "-"}</td>
+                <td className="p-4 text-center"><span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">{contact.leadScore ?? "-"}</span></td>
                 <td className="p-4 text-slate-600 text-center font-medium">{contact.interactionsCount || 1}</td>
                 <td className="p-4 text-center">
                   {contact.ticketCount > 0 ? (
@@ -352,7 +375,7 @@ function CRMView() {
               </tr>
             ))}
             {contactsQuery.data?.length === 0 && (
-              <tr><td colSpan={7} className="p-8 text-center text-slate-500">Nenhum contato encontrado no banco de dados.</td></tr>
+              <tr><td colSpan={11} className="p-8 text-center text-slate-500">Nenhum contato encontrado no banco de dados.</td></tr>
             )}
           </tbody>
         </table>
