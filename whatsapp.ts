@@ -468,7 +468,7 @@ whatsappRouter.post("/webhook", async (req, res) => {
               if (trimmedMsg) {
                 await axios.post(
                   `${EVOLUTION_URL}/message/sendText/${INSTANCE_NAME}`,
-                  { number: senderId, text: trimmedMsg },
+                  { number: phoneNumber, text: trimmedMsg },
                   { headers: { apikey: API_KEY } }
                 );
 
