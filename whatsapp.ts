@@ -18,9 +18,15 @@ import {
 } from "./server/services/chatbot";
 import { botResources, botSettings, users } from "./drizzle/schema";
 import { eq } from "drizzle-orm";
+import {
+  sendEvolutionText,
+  summarizeDeliveryHealth,
+} from "./server/services/evolution";
 
 export const whatsappRouter = Router();
-whatsappRouter.use((req, res, next) => req.path === "/webhook" ? next() : authenticatedRequest(req, res, next));
+whatsappRouter.use((req, res, next) =>
+  req.path === "/webhook" ? next() : authenticatedRequest(req, res, next)
+);
 
 // Use os mesmos nomes de variáveis que você configurou no seu .env
 const EVOLUTION_URL =
@@ -29,11 +35,17 @@ const EVOLUTION_URL =
 const API_KEY = process.env.EVOLUTION_API_KEY || "";
 // Você pode tornar isso dinâmico depois (ex: req.user.id) se tiver múltiplos clientes
 const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE_NAME || "bot-verticale";
-const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || "https://crm.agenciaverticale.com.br").replace(/\/+$/, "");
+const PUBLIC_APP_URL = (
+  process.env.PUBLIC_APP_URL || "https://crm.agenciaverticale.com.br"
+).replace(/\/+$/, "");
 const EVOLUTION_TIMEOUT_MS = Number(process.env.EVOLUTION_TIMEOUT_MS || 15_000);
 
 function evolutionError(error: any): string {
-  const detail = error?.response?.data?.response?.message || error?.response?.data?.message || error?.response?.data || error?.message;
+  const detail =
+    error?.response?.data?.response?.message ||
+    error?.response?.data?.message ||
+    error?.response?.data ||
+    error?.message;
   return typeof detail === "string" ? detail : JSON.stringify(detail);
 }
 
@@ -58,18 +70,6 @@ function normalizeQrCode(payload: any): string | null {
   return value.startsWith("data:image/")
     ? value
     : `data:image/png;base64,${value}`;
-}
-
-export async function sendEvolutionText(phoneNumber: string, text: string) {
-  if (!API_KEY) throw new Error("EVOLUTION_API_KEY não configurada");
-  if (!phoneNumber) throw new Error("Número de destino ausente");
-  const response = await axios.post(
-    `${EVOLUTION_URL}/message/sendText/${INSTANCE_NAME}`,
-    { number: phoneNumber.replace(/\D/g, ""), text },
-    { headers: { apikey: API_KEY }, timeout: EVOLUTION_TIMEOUT_MS }
-  );
-  const externalMessageId = response.data?.key?.id || response.data?.message?.key?.id || response.data?.id;
-  return { payload: response.data, externalMessageId: typeof externalMessageId === "string" ? externalMessageId : undefined };
 }
 
 // Variável em memória para controlar se o bot está silenciado
@@ -134,9 +134,17 @@ async function getGroqResponse(
     let trainingContext = "";
     const db = await getDb();
     if (db) {
-      const [training] = await db.select().from(botSettings).where(eq(botSettings.userId, userId)).limit(1);
-      const resources = await db.select().from(botResources).where(eq(botResources.userId, userId));
-      if (training) trainingContext = `
+      const [training] = await db
+        .select()
+        .from(botSettings)
+        .where(eq(botSettings.userId, userId))
+        .limit(1);
+      const resources = await db
+        .select()
+        .from(botResources)
+        .where(eq(botResources.userId, userId));
+      if (training)
+        trainingContext = `
 COMPORTAMENTO CONFIGURADO:\n${training.behaviorGeneral || ""}
 CONHECIMENTO GERAL:\n${training.knowledgeGeneral || ""}
 CONHECIMENTOS ESPECÍFICOS:\n${training.knowledgeSpecific || ""}
@@ -145,7 +153,14 @@ TRANSFERÊNCIA PARA HUMANO:\n${training.humanHandoffRules || ""}
 ASSUNTOS PROIBIDOS:\n${training.prohibitedTopics || ""}
 HORÁRIO DE ATENDIMENTO:\n${training.businessHours || ""}
 FALLBACK:\n${training.fallbackMessage || ""}`;
-      if (resources.length) trainingContext += `\nRECURSOS DISPONÍVEIS:\n${resources.filter((r: any) => r.isActive).map((r: any) => `- ${r.name}: ${r.description || ""} | gatilhos: ${r.triggerKeywords || ""} | ${r.url}`).join("\n")}`;
+      if (resources.length)
+        trainingContext += `\nRECURSOS DISPONÍVEIS:\n${resources
+          .filter((r: any) => r.isActive)
+          .map(
+            (r: any) =>
+              `- ${r.name}: ${r.description || ""} | gatilhos: ${r.triggerKeywords || ""} | ${r.url}`
+          )
+          .join("\n")}`;
     }
     const response = await axios.post(
       `${GROQ_API_URL}/chat/completions`,
@@ -213,18 +228,31 @@ whatsappRouter.post("/mute", (req, res) => {
 export async function configureEvolutionWebhook() {
   if (!API_KEY) throw new Error("EVOLUTION_API_KEY não configurada");
   const url = `${PUBLIC_APP_URL}/api/whatsapp/webhook`;
-  const events = ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONTACTS_UPSERT", "CONTACTS_UPDATE"];
+  const events = [
+    "MESSAGES_UPSERT",
+    "MESSAGES_UPDATE",
+    "CONTACTS_UPSERT",
+    "CONTACTS_UPDATE",
+  ];
   try {
     await axios.post(
       `${EVOLUTION_URL}/webhook/set/${INSTANCE_NAME}`,
-      { enabled: true, url, webhookByEvents: false, webhookBase64: false, events },
+      {
+        enabled: true,
+        url,
+        webhookByEvents: false,
+        webhookBase64: false,
+        events,
+      },
       { headers: { apikey: API_KEY } }
     );
   } catch (error: any) {
     if (error.response?.status !== 400) throw error;
     await axios.post(
       `${EVOLUTION_URL}/webhook/set/${INSTANCE_NAME}`,
-      { webhook: { enabled: true, url, byEvents: false, base64: false, events } },
+      {
+        webhook: { enabled: true, url, byEvents: false, base64: false, events },
+      },
       { headers: { apikey: API_KEY } }
     );
   }
@@ -233,7 +261,10 @@ export async function configureEvolutionWebhook() {
 whatsappRouter.get("/status", async (req, res) => {
   try {
     if (!API_KEY) {
-      return res.status(503).json({ state: "misconfigured", reason: "EVOLUTION_API_KEY não configurada" });
+      return res.status(503).json({
+        state: "misconfigured",
+        reason: "EVOLUTION_API_KEY não configurada",
+      });
     }
     const response = await axios.get(
       `${EVOLUTION_URL}/instance/connectionState/${INSTANCE_NAME}`,
@@ -255,7 +286,9 @@ whatsappRouter.get("/status", async (req, res) => {
     }
     res.json({ state });
   } catch (error: any) {
-    res.status(502).json({ state: "disconnected", reason: evolutionError(error) });
+    res
+      .status(502)
+      .json({ state: "disconnected", reason: evolutionError(error) });
   }
 });
 
@@ -266,16 +299,33 @@ whatsappRouter.get("/diagnostics", async (_req, res) => {
     instanceName: INSTANCE_NAME,
     publicWebhookUrl: `${PUBLIC_APP_URL}/api/whatsapp/webhook`,
   };
-  if (!API_KEY) return res.status(503).json({ healthy: false, configuration, state: "misconfigured" });
+  if (!API_KEY)
+    return res
+      .status(503)
+      .json({ healthy: false, configuration, state: "misconfigured" });
   try {
     const startedAt = Date.now();
-    const response = await axios.get(`${EVOLUTION_URL}/instance/connectionState/${INSTANCE_NAME}`, {
-      headers: { apikey: API_KEY }, timeout: EVOLUTION_TIMEOUT_MS,
-    });
+    const response = await axios.get(
+      `${EVOLUTION_URL}/instance/connectionState/${INSTANCE_NAME}`,
+      {
+        headers: { apikey: API_KEY },
+        timeout: EVOLUTION_TIMEOUT_MS,
+      }
+    );
     const state = response.data?.instance?.state || "unknown";
-    return res.status(state === "open" ? 200 : 503).json({ healthy: state === "open", configuration, state, latencyMs: Date.now() - startedAt });
+    return res.status(state === "open" ? 200 : 503).json({
+      healthy: state === "open",
+      configuration,
+      state,
+      latencyMs: Date.now() - startedAt,
+    });
   } catch (error: any) {
-    return res.status(502).json({ healthy: false, configuration, state: "unreachable", reason: evolutionError(error) });
+    return res.status(502).json({
+      healthy: false,
+      configuration,
+      state: "unreachable",
+      reason: evolutionError(error),
+    });
   }
 });
 
@@ -299,7 +349,11 @@ whatsappRouter.post("/sync-contacts", async (_req, res) => {
     let userId = 1;
     const db = await getDb();
     if (db) {
-      const adminUser = await db.select().from(users).where(eq(users.role, "admin")).limit(1);
+      const adminUser = await db
+        .select()
+        .from(users)
+        .where(eq(users.role, "admin"))
+        .limit(1);
       if (adminUser.length) userId = adminUser[0].id;
     }
 
@@ -319,21 +373,34 @@ whatsappRouter.post("/sync-contacts", async (_req, res) => {
       await getOrCreateContact(userId, phoneNumber, "whatsapp", {
         name: item.pushName || item.name || item.notify || phoneNumber,
         phoneNumber,
-        profilePicture: item.profilePicUrl || item.profilePictureUrl || undefined,
+        profilePicture:
+          item.profilePicUrl || item.profilePictureUrl || undefined,
       });
       imported++;
     }
-    res.json({ success: true, imported, ignored, total: evolutionContacts.length });
+    res.json({
+      success: true,
+      imported,
+      ignored,
+      total: evolutionContacts.length,
+    });
   } catch (error: any) {
-    console.error("❌ Erro ao sincronizar contatos da Evolution:", error.response?.data || error.message);
-    res.status(502).json({ error: error.response?.data?.message || error.message });
+    console.error(
+      "❌ Erro ao sincronizar contatos da Evolution:",
+      error.response?.data || error.message
+    );
+    res
+      .status(502)
+      .json({ error: error.response?.data?.message || error.message });
   }
 });
 
 whatsappRouter.get("/qrcode", async (req, res) => {
   try {
     if (!API_KEY) {
-      return res.status(503).json({ error: "EVOLUTION_API_KEY não configurada" });
+      return res
+        .status(503)
+        .json({ error: "EVOLUTION_API_KEY não configurada" });
     }
 
     try {
@@ -342,7 +409,11 @@ whatsappRouter.get("/qrcode", async (req, res) => {
         { headers: { apikey: API_KEY }, timeout: EVOLUTION_TIMEOUT_MS }
       );
       if (normalizeConnectionState(stateResponse.data) === "open") {
-        return res.json({ qrCode: null, state: "open", alreadyConnected: true });
+        return res.json({
+          qrCode: null,
+          state: "open",
+          alreadyConnected: true,
+        });
       }
     } catch {
       // A instância pode ainda não existir; a criação abaixo resolve esse caso.
@@ -375,7 +446,8 @@ whatsappRouter.get("/qrcode", async (req, res) => {
     const qrCode = normalizeQrCode(response.data);
     if (!qrCode) {
       return res.status(409).json({
-        error: "A Evolution não retornou uma imagem de QR Code. Atualize o status da instância e tente novamente.",
+        error:
+          "A Evolution não retornou uma imagem de QR Code. Atualize o status da instância e tente novamente.",
         state: normalizeConnectionState(response.data),
       });
     }
@@ -396,31 +468,53 @@ whatsappRouter.get("/qrcode", async (req, res) => {
 
 whatsappRouter.post("/disconnect", async (_req, res) => {
   try {
-    if (!API_KEY) return res.status(503).json({ error: "EVOLUTION_API_KEY não configurada" });
+    if (!API_KEY)
+      return res
+        .status(503)
+        .json({ error: "EVOLUTION_API_KEY não configurada" });
     await axios.delete(`${EVOLUTION_URL}/instance/logout/${INSTANCE_NAME}`, {
-      headers: { apikey: API_KEY }, timeout: EVOLUTION_TIMEOUT_MS,
+      headers: { apikey: API_KEY },
+      timeout: EVOLUTION_TIMEOUT_MS,
     });
     res.json({ success: true, state: "disconnected" });
   } catch (error: any) {
-    console.error("❌ Erro ao desconectar instância:", error.response?.data || error.message);
-    res.status(error.response?.status || 502).json({ error: error.response?.data?.response?.message?.[0] || error.response?.data?.message || error.message });
+    console.error(
+      "❌ Erro ao desconectar instância:",
+      error.response?.data || error.message
+    );
+    res.status(error.response?.status || 502).json({
+      error:
+        error.response?.data?.response?.message?.[0] ||
+        error.response?.data?.message ||
+        error.message,
+    });
   }
 });
 
 whatsappRouter.get("/delivery-health", async (_req, res) => {
   try {
-    if (!API_KEY) return res.status(503).json({ error: "EVOLUTION_API_KEY não configurada" });
-    const response = await axios.post(`${EVOLUTION_URL}/chat/findMessages/${INSTANCE_NAME}`, { where: {} }, { headers: { apikey: API_KEY }, timeout: EVOLUTION_TIMEOUT_MS });
+    if (!API_KEY)
+      return res
+        .status(503)
+        .json({ error: "EVOLUTION_API_KEY não configurada" });
+    const response = await axios.post(
+      `${EVOLUTION_URL}/chat/findMessages/${INSTANCE_NAME}`,
+      { where: {} },
+      { headers: { apikey: API_KEY }, timeout: EVOLUTION_TIMEOUT_MS }
+    );
     const payload = response.data;
-    const records = Array.isArray(payload) ? payload : payload?.messages?.records || payload?.records || payload?.messages || payload?.data || [];
-    const outbound = (Array.isArray(records) ? records : []).filter((message: any) => message.key?.fromMe).slice(0, 20);
-    const statuses = outbound.map((message: any) => String(message.MessageUpdate?.[0]?.status || "PENDING").toUpperCase());
-    const errors = statuses.filter((status: string) => ["ERROR", "FAILED"].includes(status)).length;
-    const delivered = statuses.filter((status: string) => ["DELIVERY_ACK", "READ", "PLAYED"].includes(status)).length;
-    const pending = statuses.filter((status: string) => ["PENDING", "SERVER_ACK"].includes(status)).length;
-    res.json({ checked: outbound.length, errors, delivered, pending, latestStatus: statuses[0] || "NO_DATA", healthy: errors === 0 || delivered > 0 });
+    const records = Array.isArray(payload)
+      ? payload
+      : payload?.messages?.records ||
+        payload?.records ||
+        payload?.messages ||
+        payload?.data ||
+        [];
+    res.json(summarizeDeliveryHealth(Array.isArray(records) ? records : []));
   } catch (error: any) {
-    res.status(502).json({ error: error.response?.data?.message || error.message });
+    res
+      .status(502)
+      .json({ error: error.response?.data?.message || error.message });
   }
 });
 
@@ -432,7 +526,9 @@ whatsappRouter.post("/webhook", async (req, res) => {
     const updates = Array.isArray(body.data) ? body.data : [body.data];
     for (const update of updates) {
       const externalMessageId = update?.key?.id || update?.id;
-      const rawStatus = String(update?.status || update?.update?.status || "").toUpperCase();
+      const rawStatus = String(
+        update?.status || update?.update?.status || ""
+      ).toUpperCase();
       const status = ["ERROR", "FAILED"].includes(rawStatus)
         ? "failed"
         : ["READ", "PLAYED"].includes(rawStatus)
@@ -440,15 +536,21 @@ whatsappRouter.post("/webhook", async (req, res) => {
           : rawStatus === "DELIVERY_ACK"
             ? "delivered"
             : "sent";
-      if (externalMessageId) await updateMessageStatusByExternalId(externalMessageId, status);
+      if (externalMessageId)
+        await updateMessageStatusByExternalId(externalMessageId, status);
     }
     return res.status(200).send("EVENT_RECEIVED");
   }
 
-  console.log(
-    "💬 Webhook recebido da Evolution API:",
-    JSON.stringify(body, null, 2)
-  );
+  console.log("[Evolution webhook] evento recebido", {
+    event: body.event,
+    messageId: body.data?.key?.id,
+    fromMe: body.data?.key?.fromMe,
+    hasText: Boolean(
+      body.data?.message?.conversation ||
+        body.data?.message?.extendedTextMessage?.text
+    ),
+  });
 
   // A Evolution envia o tipo de evento. Queremos capturar novas mensagens (messages.upsert)
   if (body.event === "messages.upsert" || body.event === "MESSAGES_UPSERT") {
@@ -491,10 +593,16 @@ whatsappRouter.post("/webhook", async (req, res) => {
               .where(eq(users.role, "admin"))
               .limit(1);
             if (adminUser.length > 0) userId = adminUser[0].id;
-            const [persistedSettings] = await db.select().from(botSettings).where(eq(botSettings.userId, userId)).limit(1);
+            const [persistedSettings] = await db
+              .select()
+              .from(botSettings)
+              .where(eq(botSettings.userId, userId))
+              .limit(1);
             botEnabled = persistedSettings?.isEnabled !== false;
-            responseDelayMs = persistedSettings?.responseDelayMs ?? responseDelayMs;
-            maxResponseLength = persistedSettings?.maxResponseLength ?? maxResponseLength;
+            responseDelayMs =
+              persistedSettings?.responseDelayMs ?? responseDelayMs;
+            maxResponseLength =
+              persistedSettings?.maxResponseLength ?? maxResponseLength;
           }
 
           const contact = await getOrCreateContact(
@@ -622,8 +730,12 @@ whatsappRouter.post("/webhook", async (req, res) => {
                 .trim();
             }
 
-            if (replyText.length > maxResponseLength) replyText = `${replyText.slice(0, maxResponseLength - 3)}...`;
-            if (responseDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
+            if (replyText.length > maxResponseLength)
+              replyText = `${replyText.slice(0, maxResponseLength - 3)}...`;
+            if (responseDelayMs > 0)
+              await new Promise(resolve =>
+                setTimeout(resolve, responseDelayMs)
+              );
 
             // 4. SEPARA AS MENSAGENS PELA TAG [QUEBRA] E ENVIA UMA POR UMA
             const replyMessages = replyText.split("[QUEBRA]");
@@ -634,11 +746,17 @@ whatsappRouter.post("/webhook", async (req, res) => {
                 let deliveryStatus: "sent" | "failed" = "sent";
                 let externalMessageId: string | undefined;
                 try {
-                  const delivery = await sendEvolutionText(phoneNumber, trimmedMsg);
+                  const delivery = await sendEvolutionText(
+                    phoneNumber,
+                    trimmedMsg
+                  );
                   externalMessageId = delivery.externalMessageId;
                 } catch (sendError: any) {
                   deliveryStatus = "failed";
-                  console.error("❌ Evolution/WhatsApp recusou a mensagem:", evolutionError(sendError));
+                  console.error(
+                    "❌ Evolution/WhatsApp recusou a mensagem:",
+                    evolutionError(sendError)
+                  );
                 }
 
                 if (contactId && conversationId) {
@@ -657,7 +775,9 @@ whatsappRouter.post("/webhook", async (req, res) => {
                 }
 
                 if (deliveryStatus === "failed") {
-                  throw new Error("Falha no envio ao WhatsApp; mensagem registrada como failed");
+                  throw new Error(
+                    "Falha no envio ao WhatsApp; mensagem registrada como failed"
+                  );
                 }
 
                 // Delay de ~2 segundos entre os blocos para simular digitação

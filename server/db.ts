@@ -131,8 +131,13 @@ export async function getApiCredential(
   const credential = result[0];
   return {
     ...credential,
-    token: credential.token.startsWith("v1.") ? decryptSecret(credential.token) : credential.token,
-    secretKey: credential.secretKey?.startsWith("v1.") ? decryptSecret(credential.secretKey) : credential.secretKey,
+    token: /^v1d?\./.test(credential.token)
+      ? decryptSecret(credential.token)
+      : credential.token,
+    secretKey:
+      credential.secretKey && /^v1d?\./.test(credential.secretKey)
+        ? decryptSecret(credential.secretKey)
+        : credential.secretKey,
   };
 }
 
@@ -202,13 +207,18 @@ export async function getOrCreateContact(
   const existing = await db
     .select()
     .from(contacts)
-    .where(and(
-      eq(contacts.userId, userId),
-      eq(contacts.platform, platform),
-      platform === "whatsapp" && data?.phoneNumber
-        ? or(eq(contacts.externalId, externalId), eq(contacts.phoneNumber, data.phoneNumber))
-        : eq(contacts.externalId, externalId)
-    ))
+    .where(
+      and(
+        eq(contacts.userId, userId),
+        eq(contacts.platform, platform),
+        platform === "whatsapp" && data?.phoneNumber
+          ? or(
+              eq(contacts.externalId, externalId),
+              eq(contacts.phoneNumber, data.phoneNumber)
+            )
+          : eq(contacts.externalId, externalId)
+      )
+    )
     .limit(1);
 
   if (existing.length > 0) {
@@ -568,20 +578,19 @@ export async function updateChatbotRule(
   const db = await getDb();
   if (!db) return;
 
-  await db.update(chatbotRules).set(data).where(and(
-    eq(chatbotRules.id, ruleId),
-    eq(chatbotRules.userId, userId)
-  ));
+  await db
+    .update(chatbotRules)
+    .set(data)
+    .where(and(eq(chatbotRules.id, ruleId), eq(chatbotRules.userId, userId)));
 }
 
 export async function deleteChatbotRule(userId: number, ruleId: number) {
   const db = await getDb();
   if (!db) return;
 
-  await db.delete(chatbotRules).where(and(
-    eq(chatbotRules.id, ruleId),
-    eq(chatbotRules.userId, userId)
-  ));
+  await db
+    .delete(chatbotRules)
+    .where(and(eq(chatbotRules.id, ruleId), eq(chatbotRules.userId, userId)));
 }
 
 // Notification Settings

@@ -47,9 +47,9 @@ async function startServer() {
   app.use(healthRouter);
 
   // Rotas do Bot (Instagram e WhatsApp)
-  app.use('/api', instagramRouter);
-  app.use('/api/whatsapp', whatsappRouter);
-  app.use('/api/auth', authRouter);
+  app.use("/api", instagramRouter);
+  app.use("/api/whatsapp", whatsappRouter);
+  app.use("/api/auth", authRouter);
 
   // tRPC API
   app.use(
@@ -77,15 +77,27 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
 
     configureEvolutionWebhook()
-      .then(() => console.log("✅ Webhook da Evolution configurado na inicialização"))
-      .catch((error: any) => console.error("❌ Falha ao configurar webhook da Evolution:", error.response?.data || error.message));
+      .then(() =>
+        console.log("✅ Webhook da Evolution configurado na inicialização")
+      )
+      .catch((error: any) =>
+        console.error(
+          "❌ Falha ao configurar webhook da Evolution:",
+          error.response?.data || error.message
+        )
+      );
 
     // PING AUTOMÁTICO: Evita que a Evolution API "durma" no Render gratuito
     // Faz uma requisição silenciosa a cada 10 minutos (600.000 ms)
-    const EVOLUTION_URL = process.env.EVOLUTION_API_URL || 'https://minha-api-whatsapp-gof4.onrender.com';
-    setInterval(() => {
-      axios.get(EVOLUTION_URL).catch(() => {});
-    }, 10 * 60 * 1000);
+    const EVOLUTION_URL =
+      process.env.EVOLUTION_API_URL ||
+      "https://minha-api-whatsapp-gof4.onrender.com";
+    setInterval(
+      () => {
+        axios.get(EVOLUTION_URL).catch(() => {});
+      },
+      10 * 60 * 1000
+    );
   });
 }
 

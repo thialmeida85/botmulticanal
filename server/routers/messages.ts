@@ -15,6 +15,7 @@ import {
 } from "../db";
 import { generateResponseSuggestion } from "../services/llm";
 import { sendInstagramMessage } from "../services/messaging";
+import { sendEvolutionText } from "../services/evolution";
 
 export const messagesRouter = router({
   /**
@@ -28,14 +29,22 @@ export const messagesRouter = router({
     )
     .query(async ({ ctx, input }) => {
       try {
-        const conversations = await getConversationsByUserId(ctx.user.id, input.status);
+        const conversations = await getConversationsByUserId(
+          ctx.user.id,
+          input.status
+        );
         const allContacts = await getContactsByUserId(ctx.user.id);
 
         const enriched = conversations.map((conv: any) => {
-          const contactData = allContacts.find((c: any) => c.id === conv.contactId);
+          const contactData = allContacts.find(
+            (c: any) => c.id === conv.contactId
+          );
           return {
             ...conv,
-            contact: contactData || { name: "Desconhecido", phoneNumber: "Sem número" },
+            contact: contactData || {
+              name: "Desconhecido",
+              phoneNumber: "Sem número",
+            },
           };
         });
 
@@ -59,10 +68,16 @@ export const messagesRouter = router({
     .query(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("Banco de dados indisponível");
-      const [ownedConversation] = await db.select({ id: conversations.id }).from(conversations).where(and(
-        eq(conversations.id, input.conversationId),
-        eq(conversations.userId, ctx.user.id)
-      )).limit(1);
+      const [ownedConversation] = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.id, input.conversationId),
+            eq(conversations.userId, ctx.user.id)
+          )
+        )
+        .limit(1);
       if (!ownedConversation) throw new Error("Conversa não encontrada");
       return getMessagesByConversation(input.conversationId, input.limit);
     }),
@@ -80,7 +95,11 @@ export const messagesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      let deliveryAttempt: { conversationId: number; contactId: number; platform: "whatsapp" | "instagram" } | null = null;
+      let deliveryAttempt: {
+        conversationId: number;
+        contactId: number;
+        platform: "whatsapp" | "instagram";
+      } | null = null;
       try {
         const db = await getDb();
         if (!db) throw new Error("Banco de dados indisponível");
@@ -88,27 +107,41 @@ export const messagesRouter = router({
           .select({ conversation: conversations, contact: contacts })
           .from(conversations)
           .innerJoin(contacts, eq(contacts.id, conversations.contactId))
-          .where(and(eq(conversations.id, input.conversationId), eq(conversations.userId, ctx.user.id)))
+          .where(
+            and(
+              eq(conversations.id, input.conversationId),
+              eq(conversations.userId, ctx.user.id)
+            )
+          )
           .limit(1);
         if (!conversation) throw new Error("Conversa não encontrada");
-        if (conversation.contact.id !== input.contactId || conversation.conversation.platform !== input.platform) {
+        if (
+          conversation.contact.id !== input.contactId ||
+          conversation.conversation.platform !== input.platform
+        ) {
           throw new Error("Contato ou canal inválido para esta conversa");
         }
-        deliveryAttempt = { conversationId: input.conversationId, contactId: input.contactId, platform: input.platform };
+        deliveryAttempt = {
+          conversationId: input.conversationId,
+          contactId: input.contactId,
+          platform: input.platform,
+        };
 
+        let externalMessageId: string | undefined;
         if (input.platform === "whatsapp") {
-          const baseUrl = (process.env.EVOLUTION_API_URL || "").replace(/\/+$/, "");
-          const apiKey = process.env.EVOLUTION_API_KEY;
-          const instance = process.env.EVOLUTION_INSTANCE_NAME || "bot-verticale";
-          if (!baseUrl || !apiKey || !conversation.contact.phoneNumber) throw new Error("Evolution API não configurada");
-          const response = await fetch(`${baseUrl}/message/sendText/${instance}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", apikey: apiKey },
-            body: JSON.stringify({ number: conversation.contact.phoneNumber, text: input.content }),
-          });
-          if (!response.ok) throw new Error(`Evolution API retornou ${response.status}: ${await response.text()}`);
+          if (!conversation.contact.phoneNumber)
+            throw new Error("Contato sem número de WhatsApp");
+          const delivery = await sendEvolutionText(
+            conversation.contact.phoneNumber,
+            input.content
+          );
+          externalMessageId = delivery.externalMessageId;
         } else {
-          await sendInstagramMessage(ctx.user.id, conversation.contact.externalId, input.content);
+          await sendInstagramMessage(
+            ctx.user.id,
+            conversation.contact.externalId,
+            input.content
+          );
         }
 
         const messageId = await saveMessage({
@@ -119,6 +152,7 @@ export const messagesRouter = router({
           direction: "outbound",
           messageType: "text",
           content: input.content,
+          externalMessageId,
           status: "sent",
         });
 
@@ -136,10 +170,14 @@ export const messagesRouter = router({
               status: "failed",
             });
           } catch (auditError) {
-            console.error("[Messages] Erro ao auditar falha de envio:", auditError);
+            console.error(
+              "[Messages] Erro ao auditar falha de envio:",
+              auditError
+            );
           }
         }
-        const reason = error instanceof Error ? error.message : "erro desconhecido";
+        const reason =
+          error instanceof Error ? error.message : "erro desconhecido";
         throw new Error(`Falha ao enviar mensagem: ${reason}`);
       }
     }),
@@ -177,10 +215,16 @@ export const messagesRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("Banco de dados indisponível");
-      const [ownedConversation] = await db.select({ id: conversations.id }).from(conversations).where(and(
-        eq(conversations.id, input.conversationId),
-        eq(conversations.userId, ctx.user.id)
-      )).limit(1);
+      const [ownedConversation] = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.id, input.conversationId),
+            eq(conversations.userId, ctx.user.id)
+          )
+        )
+        .limit(1);
       if (!ownedConversation) throw new Error("Conversa não encontrada");
       await updateConversationUnreadCount(input.conversationId, 0);
       return { success: true };
@@ -197,22 +241,33 @@ export const messagesRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const db = await getDb();
-      const allContacts = await getContactsByUserId(ctx.user.id, input.platform);
-      
+      const allContacts = await getContactsByUserId(
+        ctx.user.id,
+        input.platform
+      );
+
       if (!db) return allContacts;
 
       // Enriquecer com métricas de chamados e conversas
-      const enriched = await Promise.all(allContacts.map(async (c: any) => {
-        const tks = await db.select({ id: supportTickets.id }).from(supportTickets).where(eq(supportTickets.contactId, c.id));
-        const convs = await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.contactId, c.id));
-        return {
-          ...c,
-          customerCode: `CLI-${String(c.id).padStart(4, '0')}`,
-          ticketCount: tks.length,
-          interactionsCount: convs.length
-        };
-      }));
-      
+      const enriched = await Promise.all(
+        allContacts.map(async (c: any) => {
+          const tks = await db
+            .select({ id: supportTickets.id })
+            .from(supportTickets)
+            .where(eq(supportTickets.contactId, c.id));
+          const convs = await db
+            .select({ id: conversations.id })
+            .from(conversations)
+            .where(eq(conversations.contactId, c.id));
+          return {
+            ...c,
+            customerCode: `CLI-${String(c.id).padStart(4, "0")}`,
+            ticketCount: tks.length,
+            interactionsCount: convs.length,
+          };
+        })
+      );
+
       return enriched;
     }),
 
@@ -222,12 +277,18 @@ export const messagesRouter = router({
   getContactTickets: protectedProcedure
     .input(z.object({ contactId: z.number() }))
     .query(async ({ ctx, input }) => {
-       const db = await getDb();
-       if (!db) return [];
-       return db.select().from(supportTickets).where(and(
-         eq(supportTickets.contactId, input.contactId),
-         eq(supportTickets.userId, ctx.user.id)
-       )).orderBy(desc(supportTickets.createdAt));
+      const db = await getDb();
+      if (!db) return [];
+      return db
+        .select()
+        .from(supportTickets)
+        .where(
+          and(
+            eq(supportTickets.contactId, input.contactId),
+            eq(supportTickets.userId, ctx.user.id)
+          )
+        )
+        .orderBy(desc(supportTickets.createdAt));
     }),
 
   /**
@@ -260,20 +321,25 @@ export const messagesRouter = router({
       let imported = 0;
       for (const contact of input.contacts) {
         try {
-          await getOrCreateContact(ctx.user.id, contact.externalId, contact.platform, {
-            name: contact.name,
-            phoneNumber: contact.phoneNumber,
-            company: contact.company,
-            cnpj: contact.cnpj,
-            segment: contact.segment,
-            city: contact.city,
-            state: contact.state,
-            email: contact.email,
-            leadStatus: contact.leadStatus,
-            leadScore: contact.leadScore,
-            source: contact.source,
-            customMessage: contact.customMessage,
-          });
+          await getOrCreateContact(
+            ctx.user.id,
+            contact.externalId,
+            contact.platform,
+            {
+              name: contact.name,
+              phoneNumber: contact.phoneNumber,
+              company: contact.company,
+              cnpj: contact.cnpj,
+              segment: contact.segment,
+              city: contact.city,
+              state: contact.state,
+              email: contact.email,
+              leadStatus: contact.leadStatus,
+              leadScore: contact.leadScore,
+              source: contact.source,
+              customMessage: contact.customMessage,
+            }
+          );
           imported++;
         } catch (error) {
           console.error("[Messages Router] Erro ao importar contato:", error);
@@ -287,8 +353,13 @@ export const messagesRouter = router({
    */
   getDashboardStats: protectedProcedure.query(async ({ ctx }) => {
     const conversations = await getConversationsByUserId(ctx.user.id);
-    const openConversations = conversations.filter((c: any) => c.status === "open");
-    const totalUnread = openConversations.reduce((sum: number, c: any) => sum + c.unreadCount, 0);
+    const openConversations = conversations.filter(
+      (c: any) => c.status === "open"
+    );
+    const totalUnread = openConversations.reduce(
+      (sum: number, c: any) => sum + c.unreadCount,
+      0
+    );
 
     const settings = await getNotificationSettings(ctx.user.id);
 
