@@ -35,6 +35,17 @@ export function WhatsAppConfig() {
 
   useEffect(() => { if (settingsQuery.data) setSettings({ ...defaultSettings, ...settingsQuery.data }); }, [settingsQuery.data]);
   useEffect(() => { checkConnection(); }, []);
+  useEffect(() => {
+    if (!qrCode) return;
+    const interval = window.setInterval(async () => {
+      const connected = await checkConnection();
+      if (connected) {
+        setQrCode(null);
+        setNotice("WhatsApp conectado com sucesso.");
+      }
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [qrCode]);
 
   const saveSettings = trpc.settings.saveBotSettings.useMutation({ onSuccess: () => { setNotice("Configurações e treinamento salvos."); utils.settings.getBotSettings.invalidate(); } });
   const uploadResource = trpc.settings.uploadBotResource.useMutation({ onSuccess: () => { setResourceName(""); setResourceDescription(""); setResourceKeywords(""); setResourceUrl(""); setResourceFile(null); resources.refetch(); setNotice("Recurso adicionado à biblioteca."); } });
@@ -42,29 +53,44 @@ export function WhatsAppConfig() {
 
   async function checkConnection() {
     try {
-      const [state, health] = await Promise.all([axios.get("/api/whatsapp/status"), axios.get("/api/whatsapp/delivery-health").catch(() => ({ data: null }))]);
-      setStatus(state.data.state === "open" ? "connected" : "disconnected");
+      const [state, health] = await Promise.all([whatsappApi.get("/api/whatsapp/status"), whatsappApi.get("/api/whatsapp/delivery-health").catch(() => ({ data: null }))]);
+      const connected = state.data.state === "open";
+      setStatus(connected ? "connected" : "disconnected");
       setDelivery(health.data);
-    } catch { setStatus("disconnected"); }
+      return connected;
+    } catch (error: any) {
+      setStatus("disconnected");
+      setNotice(error.response?.data?.reason || error.response?.data?.error || "Não foi possível consultar a conexão do WhatsApp.");
+      return false;
+    }
   }
 
   async function connect() {
     setConnectionBusy(true); setNotice(null);
-    try { const response = await axios.get("/api/whatsapp/qrcode"); setQrCode(response.data.qrCode); setStatus("disconnected"); }
+    try {
+      const response = await whatsappApi.get("/api/whatsapp/qrcode");
+      if (response.data.alreadyConnected || response.data.state === "open") {
+        setQrCode(null); setStatus("connected"); setNotice("A instância já está conectada.");
+      } else if (response.data.qrCode) {
+        setQrCode(response.data.qrCode); setStatus("disconnected"); setNotice("Escaneie o QR Code. O status será atualizado automaticamente.");
+      } else {
+        setNotice("A Evolution não retornou um QR Code válido.");
+      }
+    }
     catch (error: any) { setNotice(error.response?.data?.error || "Não foi possível gerar o QR Code."); }
     finally { setConnectionBusy(false); }
   }
 
   async function disconnect() {
     setConnectionBusy(true); setNotice(null);
-    try { await axios.post("/api/whatsapp/disconnect"); setStatus("disconnected"); setQrCode(null); setNotice("WhatsApp desconectado. Gere um novo QR Code para reconectar."); }
+    try { await whatsappApi.post("/api/whatsapp/disconnect"); setStatus("disconnected"); setQrCode(null); setNotice("WhatsApp desconectado. Gere um novo QR Code para reconectar."); }
     catch (error: any) { setNotice(error.response?.data?.error || "Falha ao desconectar."); }
     finally { setConnectionBusy(false); }
   }
 
   async function syncContacts() {
     setConnectionBusy(true);
-    try { const response = await axios.post("/api/whatsapp/sync-contacts"); setNotice(`${response.data.imported} contatos sincronizados.`); }
+    try { const response = await whatsappApi.post("/api/whatsapp/sync-contacts"); setNotice(`${response.data.imported} contatos sincronizados.`); }
     catch (error: any) { setNotice(error.response?.data?.error || "Falha ao sincronizar contatos."); }
     finally { setConnectionBusy(false); }
   }
@@ -90,9 +116,9 @@ export function WhatsAppConfig() {
           {connectionBusy || status === "checking" ? <Loader2 className="h-8 w-8 animate-spin text-slate-400" /> : qrCode ? <img src={qrCode} alt="QR Code para conectar o WhatsApp" className="h-56 w-56" /> : status === "connected" ? <div className="text-center"><CheckCircle2 className="mx-auto h-14 w-14 text-green-500" /><p className="mt-2 font-semibold">Instância conectada</p></div> : <div className="text-center"><QrCode className="mx-auto h-14 w-14 text-slate-300" /><p className="mt-2 text-sm text-slate-500">Gere o QR Code para conectar</p></div>}
         </div>
         <div className="space-y-4">
-          <div className="flex flex-wrap gap-2"><Button onClick={connect} disabled={connectionBusy}><QrCode className="mr-2 h-4 w-4" /> Gerar QR / Reconectar</Button><Button variant="destructive" onClick={disconnect} disabled={status !== "connected" || connectionBusy}><PowerOff className="mr-2 h-4 w-4" /> Desconectar</Button><Button variant="outline" onClick={syncContacts} disabled={status !== "connected" || connectionBusy}><Users className="mr-2 h-4 w-4" /> Sincronizar contatos</Button><Button variant="outline" onClick={checkConnection}><RefreshCw className="mr-2 h-4 w-4" /> Atualizar diagnóstico</Button></div>
+          <div className="flex flex-wrap gap-2"><Button onClick={connect} disabled={connectionBusy}><QrCode className="mr-2 h-4 w-4" /> Gerar QR / Reconectar</Button><Button variant="destructive" onClick={disconnect} disabled={connectionBusy}><PowerOff className="mr-2 h-4 w-4" /> Desconectar / Limpar sessão</Button><Button variant="outline" onClick={syncContacts} disabled={status !== "connected" || connectionBusy}><Users className="mr-2 h-4 w-4" /> Sincronizar contatos</Button><Button variant="outline" onClick={checkConnection} disabled={connectionBusy}><RefreshCw className="mr-2 h-4 w-4" /> Atualizar diagnóstico</Button></div>
           <div className="flex items-center justify-between rounded-xl border p-4"><div><p className="font-semibold">Bot automático</p><p className="text-xs text-slate-500">Desative para atendimento exclusivamente humano.</p></div><Switch aria-label="Ativar ou desativar bot automático" checked={settings.isEnabled} onCheckedChange={(value) => update("isEnabled", value)} /></div>
-          {delivery && <div className={`rounded-xl border p-4 ${delivery.errors ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"}`}><p className="font-semibold">Diagnóstico de entrega: {delivery.latestStatus}</p><p className="mt-1 text-sm">Analisadas: {delivery.checked} | Erros: {delivery.errors} | Entregues: {delivery.delivered} | Pendentes: {delivery.pending}</p>{delivery.errors > 0 && <p className="mt-2 text-sm text-red-700">A Evolution está aceitando mensagens, mas a sessão não está entregando ao WhatsApp. Desconecte e reconecte pelo QR Code.</p>}</div>}
+          {delivery && <div className={`rounded-xl border p-4 ${status !== "connected" ? "border-red-200 bg-red-50" : delivery.errors ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}><p className="font-semibold">Diagnóstico de entrega: {delivery.latestStatus}</p><p className="mt-1 text-sm">Analisadas: {delivery.checked} | Erros históricos: {delivery.errors} | Entregues: {delivery.delivered} | Pendentes: {delivery.pending}</p>{status !== "connected" && <p className="mt-2 text-sm text-red-700">A sessão está desconectada. Limpe a sessão e reconecte pelo QR Code.</p>}{status === "connected" && delivery.errors > 0 && <p className="mt-2 text-sm text-amber-700">A sessão está conectada, mas existem falhas entre as últimas mensagens analisadas. DELIVERY_ACK significa entrega confirmada.</p>}</div>}
         </div>
       </CardContent></Card>
 
@@ -131,3 +157,9 @@ function TrainingCard({ icon, title, description, value, onChange }: { icon: Rea
 function Capability({ icon, title, checked, onChange }: { icon: React.ReactNode; title: string; checked: boolean; onChange: (value: boolean) => void }) {
   return <div className="flex items-center justify-between rounded-xl border p-4"><div className="flex items-center gap-2 text-sm font-medium">{icon}{title}</div><Switch aria-label={title} checked={checked} onCheckedChange={onChange} /></div>;
 }
+const whatsappApi = axios.create();
+whatsappApi.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});

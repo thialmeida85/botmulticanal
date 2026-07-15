@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getDb } from "../db";
+import { sql } from "drizzle-orm";
 
 const router = Router();
 
@@ -18,9 +19,13 @@ router.get("/health", async (req, res) => {
       });
     }
 
-    // Return healthy status
+    const startedAt = Date.now();
+    await db.execute(sql`select 1 as ok`);
+
     return res.status(200).json({
       status: "healthy",
+      database: "connected",
+      databaseLatencyMs: Date.now() - startedAt,
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
     });

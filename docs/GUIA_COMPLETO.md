@@ -123,7 +123,7 @@ No seu projeto **Botmulticanal** (seja no seu arquivo `.env` local ou na aba Env
 
 ```env
 EVOLUTION_API_URL=https://minha-api-whatsapp-gof4.onrender.com
-EVOLUTION_API_KEY=269b25b90301acfd3f41cad77b9f48df
+EVOLUTION_API_KEY=<SUA_CHAVE_DA_EVOLUTION_API>
 ```
 
 Com isso feito:

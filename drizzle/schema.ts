@@ -1,17 +1,97 @@
-import { integer, pgEnum, pgTable, text, timestamp, varchar, boolean, index, serial } from "drizzle-orm/pg-core";
+import {
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  varchar,
+  boolean,
+  index,
+  serial,
+} from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 export const roleEnum = pgEnum("role", ["user", "admin"]);
-export const platformEnum = pgEnum("platform", ["whatsapp", "instagram", "both"]);
-export const contactStatusEnum = pgEnum("contact_status", ["active", "inactive", "blocked"]);
-export const conversationStatusEnum = pgEnum("conversation_status", ["open", "closed", "pending"]);
+export const platformEnum = pgEnum("platform", [
+  "whatsapp",
+  "instagram",
+  "both",
+]);
+export const contactStatusEnum = pgEnum("contact_status", [
+  "active",
+  "inactive",
+  "blocked",
+]);
+export const conversationStatusEnum = pgEnum("conversation_status", [
+  "open",
+  "closed",
+  "pending",
+]);
 export const directionEnum = pgEnum("direction", ["inbound", "outbound"]);
-export const messageTypeEnum = pgEnum("message_type", ["text", "image", "video", "audio", "document", "location"]);
-export const messageStatusEnum = pgEnum("message_status", ["sent", "delivered", "read", "failed"]);
-export const notificationTypeEnum = pgEnum("notification_type", ["email", "in_app"]);
-export const campaignStatusEnum = pgEnum("campaign_status", ["draft", "scheduled", "running", "paused", "completed", "failed"]);
-export const ticketStatusEnum = pgEnum("ticket_status", ["open", "in_progress", "resolved", "closed"]);
+export const messageTypeEnum = pgEnum("message_type", [
+  "text",
+  "image",
+  "video",
+  "audio",
+  "document",
+  "location",
+]);
+export const messageStatusEnum = pgEnum("message_status", [
+  "sent",
+  "delivered",
+  "read",
+  "failed",
+]);
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "email",
+  "in_app",
+]);
+export const campaignStatusEnum = pgEnum("campaign_status", [
+  "draft",
+  "scheduled",
+  "running",
+  "paused",
+  "completed",
+  "failed",
+]);
+export const ticketStatusEnum = pgEnum("ticket_status", [
+  "open",
+  "in_progress",
+  "resolved",
+  "closed",
+]);
 export const dealStatusEnum = pgEnum("deal_status", ["open", "won", "lost"]);
+export const tenantStatusEnum = pgEnum("tenant_status", [
+  "trial",
+  "active",
+  "suspended",
+  "cancelled",
+]);
+export const tenantRoleEnum = pgEnum("tenant_role", [
+  "owner",
+  "admin",
+  "agent",
+  "viewer",
+]);
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "trialing",
+  "active",
+  "past_due",
+  "cancelled",
+]);
+export const installationStatusEnum = pgEnum("installation_status", [
+  "draft",
+  "provisioning",
+  "active",
+  "failed",
+  "suspended",
+]);
+export const jobStatusEnum = pgEnum("job_status", [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+]);
 
 /**
  * Core user table backing auth flow.
@@ -39,6 +119,158 @@ export const users = pgTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// Control plane: clientes, acessos, planos e instalações isoladas.
+export const tenants = pgTable("tenants", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  legalName: varchar("legalName", { length: 255 }),
+  document: varchar("document", { length: 32 }),
+  slug: varchar("slug", { length: 100 }).notNull().unique(),
+  contactEmail: varchar("contactEmail", { length: 320 }),
+  status: tenantStatusEnum("status").default("trial").notNull(),
+  trialEndsAt: timestamp("trialEndsAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+export const tenantMembers = pgTable(
+  "tenant_members",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId").notNull(),
+    userId: integer("userId").notNull(),
+    role: tenantRoleEnum("role").default("agent").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    tenantIdx: index("idx_tenant_members_tenant").on(table.tenantId),
+    userIdx: index("idx_tenant_members_user").on(table.userId),
+  })
+);
+export const plans = pgTable("plans", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 120 }).notNull(),
+  code: varchar("code", { length: 80 }).notNull().unique(),
+  priceCents: integer("priceCents").default(0).notNull(),
+  billingInterval: varchar("billingInterval", { length: 20 })
+    .default("month")
+    .notNull(),
+  limitsJson: text("limitsJson").default("{}").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId").notNull(),
+    planId: integer("planId").notNull(),
+    status: subscriptionStatusEnum("status").default("trialing").notNull(),
+    provider: varchar("provider", { length: 40 }),
+    externalCustomerId: varchar("externalCustomerId", { length: 255 }),
+    externalSubscriptionId: varchar("externalSubscriptionId", { length: 255 }),
+    currentPeriodEndsAt: timestamp("currentPeriodEndsAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({ tenantIdx: index("idx_subscriptions_tenant").on(table.tenantId) })
+);
+export const customerInstallations = pgTable(
+  "customer_installations",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId").notNull(),
+    status: installationStatusEnum("status").default("draft").notNull(),
+    renderServiceId: varchar("renderServiceId", { length: 255 }),
+    renderOwnerId: varchar("renderOwnerId", { length: 255 }),
+    publicUrl: text("publicUrl"),
+    repositoryUrl: text("repositoryUrl"),
+    branch: varchar("branch", { length: 120 }).default("main").notNull(),
+    neonProjectId: varchar("neonProjectId", { length: 255 }),
+    neonBranchId: varchar("neonBranchId", { length: 255 }),
+    installedVersion: varchar("installedVersion", { length: 80 }),
+    lastHealthStatus: varchar("lastHealthStatus", { length: 40 }),
+    lastHealthCheckedAt: timestamp("lastHealthCheckedAt"),
+    lastError: text("lastError"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({ tenantIdx: index("idx_installations_tenant").on(table.tenantId) })
+);
+export const installationSecrets = pgTable(
+  "installation_secrets",
+  {
+    id: serial("id").primaryKey(),
+    installationId: integer("installationId").notNull(),
+    key: varchar("key", { length: 120 }).notNull(),
+    encryptedValue: text("encryptedValue").notNull(),
+    valueHint: varchar("valueHint", { length: 32 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    installationIdx: index("idx_installation_secrets_installation").on(
+      table.installationId
+    ),
+  })
+);
+export const integrationConnections = pgTable(
+  "integration_connections",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId").notNull(),
+    installationId: integer("installationId"),
+    provider: varchar("provider", { length: 60 }).notNull(),
+    displayName: varchar("displayName", { length: 120 }),
+    configJson: text("configJson").default("{}").notNull(),
+    isActive: boolean("isActive").default(true).notNull(),
+    lastTestStatus: varchar("lastTestStatus", { length: 40 }),
+    lastTestedAt: timestamp("lastTestedAt"),
+    lastError: text("lastError"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({ tenantIdx: index("idx_integrations_tenant").on(table.tenantId) })
+);
+export const deploymentJobs = pgTable(
+  "deployment_jobs",
+  {
+    id: serial("id").primaryKey(),
+    installationId: integer("installationId").notNull(),
+    type: varchar("type", { length: 50 }).notNull(),
+    status: jobStatusEnum("status").default("pending").notNull(),
+    externalId: varchar("externalId", { length: 255 }),
+    detailsJson: text("detailsJson").default("{}").notNull(),
+    error: text("error"),
+    startedAt: timestamp("startedAt"),
+    finishedAt: timestamp("finishedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    installationIdx: index("idx_deployment_jobs_installation").on(
+      table.installationId
+    ),
+  })
+);
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId"),
+    actorUserId: integer("actorUserId"),
+    action: varchar("action", { length: 120 }).notNull(),
+    entityType: varchar("entityType", { length: 80 }).notNull(),
+    entityId: varchar("entityId", { length: 80 }),
+    metadataJson: text("metadataJson").default("{}").notNull(),
+    ipAddress: varchar("ipAddress", { length: 64 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    tenantIdx: index("idx_audit_logs_tenant").on(table.tenantId),
+    actorIdx: index("idx_audit_logs_actor").on(table.actorUserId),
+  })
+);
+
 // API Credentials - Armazena tokens e credenciais de APIs externas
 export const apiCredentials = pgTable(
   "api_credentials",
@@ -54,7 +286,7 @@ export const apiCredentials = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     userIdIdx: index("idx_user_id").on(table.userId),
   })
 );
@@ -89,9 +321,12 @@ export const contacts = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     userIdIdx: index("idx_contacts_user_id").on(table.userId),
-    userPlatformIdx: index("idx_contacts_user_platform").on(table.userId, table.platform),
+    userPlatformIdx: index("idx_contacts_user_platform").on(
+      table.userId,
+      table.platform
+    ),
   })
 );
 
@@ -114,10 +349,16 @@ export const conversations = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     userIdIdx: index("idx_conversations_user_id").on(table.userId),
-    userStatusIdx: index("idx_conversations_user_status").on(table.userId, table.status),
-    userPlatformIdx: index("idx_conversations_user_platform").on(table.userId, table.platform),
+    userStatusIdx: index("idx_conversations_user_status").on(
+      table.userId,
+      table.status
+    ),
+    userPlatformIdx: index("idx_conversations_user_platform").on(
+      table.userId,
+      table.platform
+    ),
   })
 );
 
@@ -147,9 +388,14 @@ export const messages = pgTable(
     automatedResponse: boolean("automatedResponse").default(false).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
-    conversationIdIdx: index("idx_messages_conversation_id").on(table.conversationId),
-    userCreatedIdx: index("idx_messages_user_created").on(table.userId, table.createdAt),
+  table => ({
+    conversationIdIdx: index("idx_messages_conversation_id").on(
+      table.conversationId
+    ),
+    userCreatedIdx: index("idx_messages_user_created").on(
+      table.userId,
+      table.createdAt
+    ),
   })
 );
 
@@ -171,8 +417,11 @@ export const chatbotRules = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
-    userActiveIdx: index("idx_chatbot_rules_user_active").on(table.userId, table.isActive),
+  table => ({
+    userActiveIdx: index("idx_chatbot_rules_user_active").on(
+      table.userId,
+      table.isActive
+    ),
   })
 );
 
@@ -191,8 +440,12 @@ export const botSettings = pgTable("bot_settings", {
   humanHandoffRules: text("humanHandoffRules"),
   prohibitedTopics: text("prohibitedTopics"),
   businessHours: text("businessHours"),
-  audioUnderstandingEnabled: boolean("audioUnderstandingEnabled").default(false).notNull(),
-  imageUnderstandingEnabled: boolean("imageUnderstandingEnabled").default(false).notNull(),
+  audioUnderstandingEnabled: boolean("audioUnderstandingEnabled")
+    .default(false)
+    .notNull(),
+  imageUnderstandingEnabled: boolean("imageUnderstandingEnabled")
+    .default(false)
+    .notNull(),
   mediaStorageEnabled: boolean("mediaStorageEnabled").default(false).notNull(),
   responseDelayMs: integer("responseDelayMs").default(1500).notNull(),
   maxResponseLength: integer("maxResponseLength").default(600).notNull(),
@@ -215,29 +468,33 @@ export const botResources = pgTable(
     isActive: boolean("isActive").default(true).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({ userIdIdx: index("idx_bot_resources_user").on(table.userId) })
+  table => ({ userIdIdx: index("idx_bot_resources_user").on(table.userId) })
 );
 
 export type BotSetting = typeof botSettings.$inferSelect;
 export type BotResource = typeof botResources.$inferSelect;
 
 // Notification Settings - Configurações de notificação
-export const notificationSettings = pgTable(
-  "notification_settings",
-  {
-    id: serial("id").primaryKey(),
-    userId: integer("userId").notNull().unique(),
-    emailNotificationsEnabled: boolean("emailNotificationsEnabled").default(true).notNull(),
-    unreadMessageThreshold: integer("unreadMessageThreshold").default(10).notNull(),
-    notifyOnEveryMessage: boolean("notifyOnEveryMessage").default(false).notNull(),
-    notifyOnImportantKeywords: text("notifyOnImportantKeywords"),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-  }
-);
+export const notificationSettings = pgTable("notification_settings", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull().unique(),
+  emailNotificationsEnabled: boolean("emailNotificationsEnabled")
+    .default(true)
+    .notNull(),
+  unreadMessageThreshold: integer("unreadMessageThreshold")
+    .default(10)
+    .notNull(),
+  notifyOnEveryMessage: boolean("notifyOnEveryMessage")
+    .default(false)
+    .notNull(),
+  notifyOnImportantKeywords: text("notifyOnImportantKeywords"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
 
 export type NotificationSetting = typeof notificationSettings.$inferSelect;
-export type InsertNotificationSetting = typeof notificationSettings.$inferInsert;
+export type InsertNotificationSetting =
+  typeof notificationSettings.$inferInsert;
 
 // Notification Logs - Registra notificações enviadas
 export const notificationLogs = pgTable(
@@ -252,8 +509,11 @@ export const notificationLogs = pgTable(
     conversationId: integer("conversationId"),
     sentAt: timestamp("sentAt").defaultNow().notNull(),
   },
-  (table) => ({
-    userTypeIdx: index("idx_notification_logs_user_type").on(table.userId, table.type),
+  table => ({
+    userTypeIdx: index("idx_notification_logs_user_type").on(
+      table.userId,
+      table.type
+    ),
   })
 );
 
@@ -280,7 +540,7 @@ export const campaigns = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     userIdIdx: index("idx_campaigns_user_id").on(table.userId),
     statusIdx: index("idx_campaigns_status").on(table.status),
   })
@@ -315,7 +575,7 @@ export const tags = pgTable(
     color: varchar("color", { length: 20 }).default("#2563eb").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({ userIdIdx: index("idx_tags_user_id").on(table.userId) })
+  table => ({ userIdIdx: index("idx_tags_user_id").on(table.userId) })
 );
 
 export const contactTags = pgTable(
@@ -327,7 +587,7 @@ export const contactTags = pgTable(
     tagId: integer("tagId").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     contactIdx: index("idx_contact_tags_contact").on(table.contactId),
     tagIdx: index("idx_contact_tags_tag").on(table.tagId),
   })
@@ -342,7 +602,7 @@ export const salesPipelines = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({ userIdIdx: index("idx_sales_pipelines_user").on(table.userId) })
+  table => ({ userIdIdx: index("idx_sales_pipelines_user").on(table.userId) })
 );
 
 export const pipelineStages = pgTable(
@@ -356,7 +616,9 @@ export const pipelineStages = pgTable(
     position: integer("position").default(0).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({ pipelineIdx: index("idx_pipeline_stages_pipeline").on(table.pipelineId) })
+  table => ({
+    pipelineIdx: index("idx_pipeline_stages_pipeline").on(table.pipelineId),
+  })
 );
 
 export const deals = pgTable(
@@ -376,7 +638,7 @@ export const deals = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     pipelineIdx: index("idx_deals_pipeline").on(table.pipelineId),
     stageIdx: index("idx_deals_stage").on(table.stageId),
     contactIdx: index("idx_deals_contact").on(table.contactId),
@@ -405,15 +667,30 @@ export const contactsRelations = relations(contacts, ({ one, many }) => ({
   tickets: many(supportTickets),
 }));
 
-export const conversationsRelations = relations(conversations, ({ one, many }) => ({
-  user: one(users, { fields: [conversations.userId], references: [users.id] }),
-  contact: one(contacts, { fields: [conversations.contactId], references: [contacts.id] }),
-  messages: many(messages),
-}));
+export const conversationsRelations = relations(
+  conversations,
+  ({ one, many }) => ({
+    user: one(users, {
+      fields: [conversations.userId],
+      references: [users.id],
+    }),
+    contact: one(contacts, {
+      fields: [conversations.contactId],
+      references: [contacts.id],
+    }),
+    messages: many(messages),
+  })
+);
 
 export const messagesRelations = relations(messages, ({ one }) => ({
-  conversation: one(conversations, { fields: [messages.conversationId], references: [conversations.id] }),
-  contact: one(contacts, { fields: [messages.contactId], references: [contacts.id] }),
+  conversation: one(conversations, {
+    fields: [messages.conversationId],
+    references: [conversations.id],
+  }),
+  contact: one(contacts, {
+    fields: [messages.contactId],
+    references: [contacts.id],
+  }),
   user: one(users, { fields: [messages.userId], references: [users.id] }),
 }));
 
@@ -426,6 +703,9 @@ export const campaignsRelations = relations(campaigns, ({ one }) => ({
 }));
 
 export const supportTicketsRelations = relations(supportTickets, ({ one }) => ({
-  contact: one(contacts, { fields: [supportTickets.contactId], references: [contacts.id] }),
+  contact: one(contacts, {
+    fields: [supportTickets.contactId],
+    references: [contacts.id],
+  }),
   user: one(users, { fields: [supportTickets.userId], references: [users.id] }),
 }));

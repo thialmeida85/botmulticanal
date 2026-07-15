@@ -23,6 +23,12 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: SECRETS_ENCRYPTION_KEY
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_INITIAL_PASSWORD
+        sync: false
       - key: VITE_APP_ID
         sync: false
       - key: OAUTH_SERVER_URL
@@ -39,8 +45,6 @@ services:
         sync: false
       - key: VITE_FRONTEND_FORGE_API_URL
         sync: false
-      - key: VITE_FRONTEND_FORGE_API_KEY
-        sync: false
       - key: EVOLUTION_API_URL
         sync: false
       - key: EVOLUTION_API_KEY
@@ -52,6 +56,10 @@ services:
       - key: GROQ_API_URL
         value: https://api.groq.com/openai/v1
       - key: GROQ_API_KEY
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: NEON_API_KEY
         sync: false
 
     # Build settings

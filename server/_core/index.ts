@@ -13,6 +13,7 @@ import { instagramRouter } from "../../instagram";
 import { configureEvolutionWebhook, whatsappRouter } from "../../whatsapp";
 import { authRouter } from "../../auth";
 import axios from "axios";
+import { validateRuntimeEnvironment } from "./runtimeConfig";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -34,6 +35,7 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  validateRuntimeEnvironment();
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads

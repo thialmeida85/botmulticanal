@@ -4,6 +4,7 @@ import { jwtVerify } from "jose";
 import { getDb } from "../db";
 import { users } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
+import { jwtSecret } from "./authToken";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
@@ -21,9 +22,7 @@ export async function createContext(
     const authHeader = opts.req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
-      const secretKey = new TextEncoder().encode(process.env.JWT_SECRET || 'sua_chave_secreta_super_segura_aqui_123');
-      
-      const { payload } = await jwtVerify(token, secretKey);
+      const { payload } = await jwtVerify(token, jwtSecret());
       if (payload && payload.userId) {
         const db = await getDb();
         const foundUsers = await db.select().from(users).where(eq(users.id, Number(payload.userId))).limit(1);

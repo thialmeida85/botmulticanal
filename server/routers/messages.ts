@@ -57,6 +57,13 @@ export const messagesRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Banco de dados indisponível");
+      const [ownedConversation] = await db.select({ id: conversations.id }).from(conversations).where(and(
+        eq(conversations.id, input.conversationId),
+        eq(conversations.userId, ctx.user.id)
+      )).limit(1);
+      if (!ownedConversation) throw new Error("Conversa não encontrada");
       return getMessagesByConversation(input.conversationId, input.limit);
     }),
 
@@ -73,6 +80,7 @@ export const messagesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      let deliveryAttempt: { conversationId: number; contactId: number; platform: "whatsapp" | "instagram" } | null = null;
       try {
         const db = await getDb();
         if (!db) throw new Error("Banco de dados indisponível");
@@ -86,6 +94,7 @@ export const messagesRouter = router({
         if (conversation.contact.id !== input.contactId || conversation.conversation.platform !== input.platform) {
           throw new Error("Contato ou canal inválido para esta conversa");
         }
+        deliveryAttempt = { conversationId: input.conversationId, contactId: input.contactId, platform: input.platform };
 
         if (input.platform === "whatsapp") {
           const baseUrl = (process.env.EVOLUTION_API_URL || "").replace(/\/+$/, "");
@@ -116,7 +125,22 @@ export const messagesRouter = router({
         return { success: true, messageId };
       } catch (error) {
         console.error("[Messages] Erro ao enviar mensagem:", error);
-        throw new Error("Falha ao enviar mensagem");
+        if (deliveryAttempt) {
+          try {
+            await saveMessage({
+              ...deliveryAttempt,
+              userId: ctx.user.id,
+              direction: "outbound",
+              messageType: "text",
+              content: input.content,
+              status: "failed",
+            });
+          } catch (auditError) {
+            console.error("[Messages] Erro ao auditar falha de envio:", auditError);
+          }
+        }
+        const reason = error instanceof Error ? error.message : "erro desconhecido";
+        throw new Error(`Falha ao enviar mensagem: ${reason}`);
       }
     }),
 
@@ -151,6 +175,13 @@ export const messagesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Banco de dados indisponível");
+      const [ownedConversation] = await db.select({ id: conversations.id }).from(conversations).where(and(
+        eq(conversations.id, input.conversationId),
+        eq(conversations.userId, ctx.user.id)
+      )).limit(1);
+      if (!ownedConversation) throw new Error("Conversa não encontrada");
       await updateConversationUnreadCount(input.conversationId, 0);
       return { success: true };
     }),
@@ -190,10 +221,13 @@ export const messagesRouter = router({
    */
   getContactTickets: protectedProcedure
     .input(z.object({ contactId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
        const db = await getDb();
        if (!db) return [];
-       return db.select().from(supportTickets).where(eq(supportTickets.contactId, input.contactId)).orderBy(desc(supportTickets.createdAt));
+       return db.select().from(supportTickets).where(and(
+         eq(supportTickets.contactId, input.contactId),
+         eq(supportTickets.userId, ctx.user.id)
+       )).orderBy(desc(supportTickets.createdAt));
     }),
 
   /**

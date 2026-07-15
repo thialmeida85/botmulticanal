@@ -186,7 +186,7 @@ export const settingsRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const { ruleId, ...data } = input;
-        await updateChatbotRule(ruleId, data);
+        await updateChatbotRule(ctx.user.id, ruleId, data);
 
         return { success: true };
       } catch (error) {
@@ -206,7 +206,7 @@ export const settingsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       try {
-        await deleteChatbotRule(input.ruleId);
+        await deleteChatbotRule(ctx.user.id, input.ruleId);
 
         return { success: true };
       } catch (error) {

@@ -14,6 +14,7 @@ import {
   supportTickets,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { decryptSecret, encryptSecret } from "./_core/secrets";
 
 let _db: any = null;
 
@@ -126,7 +127,13 @@ export async function getApiCredential(
     )
     .limit(1);
 
-  return result.length > 0 ? result[0] : undefined;
+  if (!result.length) return undefined;
+  const credential = result[0];
+  return {
+    ...credential,
+    token: credential.token.startsWith("v1.") ? decryptSecret(credential.token) : credential.token,
+    secretKey: credential.secretKey?.startsWith("v1.") ? decryptSecret(credential.secretKey) : credential.secretKey,
+  };
 }
 
 export async function upsertApiCredential(
@@ -148,8 +155,8 @@ export async function upsertApiCredential(
     await db
       .update(apiCredentials)
       .set({
-        token: data.token,
-        secretKey: data.secretKey,
+        token: encryptSecret(data.token),
+        secretKey: data.secretKey ? encryptSecret(data.secretKey) : undefined,
         phoneNumberId: data.phoneNumberId,
         businessAccountId: data.businessAccountId,
         updatedAt: new Date(),
@@ -159,8 +166,8 @@ export async function upsertApiCredential(
     await db.insert(apiCredentials).values({
       userId,
       platform,
-      token: data.token,
-      secretKey: data.secretKey,
+      token: encryptSecret(data.token),
+      secretKey: data.secretKey ? encryptSecret(data.secretKey) : undefined,
       phoneNumberId: data.phoneNumberId,
       businessAccountId: data.businessAccountId,
     });
@@ -462,6 +469,18 @@ export async function updateMessageStatus(
   await db.update(messages).set({ status }).where(eq(messages.id, messageId));
 }
 
+export async function updateMessageStatusByExternalId(
+  externalMessageId: string,
+  status: "sent" | "delivered" | "read" | "failed"
+) {
+  const db = await getDb();
+  if (!db || !externalMessageId) return;
+  await db
+    .update(messages)
+    .set({ status })
+    .where(eq(messages.externalMessageId, externalMessageId));
+}
+
 export async function getUnreadMessageCount(userId: number) {
   const db = await getDb();
   if (!db) return 0;
@@ -535,6 +554,7 @@ export async function saveChatbotRule(data: {
 }
 
 export async function updateChatbotRule(
+  userId: number,
   ruleId: number,
   data: Partial<{
     name: string;
@@ -548,14 +568,20 @@ export async function updateChatbotRule(
   const db = await getDb();
   if (!db) return;
 
-  await db.update(chatbotRules).set(data).where(eq(chatbotRules.id, ruleId));
+  await db.update(chatbotRules).set(data).where(and(
+    eq(chatbotRules.id, ruleId),
+    eq(chatbotRules.userId, userId)
+  ));
 }
 
-export async function deleteChatbotRule(ruleId: number) {
+export async function deleteChatbotRule(userId: number, ruleId: number) {
   const db = await getDb();
   if (!db) return;
 
-  await db.delete(chatbotRules).where(eq(chatbotRules.id, ruleId));
+  await db.delete(chatbotRules).where(and(
+    eq(chatbotRules.id, ruleId),
+    eq(chatbotRules.userId, userId)
+  ));
 }
 
 // Notification Settings
