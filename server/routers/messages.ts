@@ -1,8 +1,15 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { supportTickets, conversations, contacts } from "../../drizzle/schema";
-import { and, eq, desc } from "drizzle-orm";
+import {
+  supportTickets,
+  conversations,
+  contacts,
+  messages,
+  notificationLogs,
+  deals,
+} from "../../drizzle/schema";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import {
   getConversationsByUserId,
   getMessagesByConversation,
@@ -80,6 +87,77 @@ export const messagesRouter = router({
         .limit(1);
       if (!ownedConversation) throw new Error("Conversa não encontrada");
       return getMessagesByConversation(input.conversationId, input.limit);
+    }),
+
+  deleteMessages: protectedProcedure
+    .input(
+      z.object({
+        conversationId: z.number(),
+        messageIds: z.array(z.number()).min(1).max(200),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Banco de dados indisponível");
+      const [ownedConversation] = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.id, input.conversationId),
+            eq(conversations.userId, ctx.user.id)
+          )
+        )
+        .limit(1);
+      if (!ownedConversation) throw new Error("Conversa não encontrada");
+      const ownedMessages = await db
+        .select({ id: messages.id })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.conversationId, input.conversationId),
+            inArray(messages.id, input.messageIds)
+          )
+        );
+      const ids = ownedMessages.map((item: { id: number }) => item.id);
+      if (!ids.length) return { success: true, deleted: 0 };
+      await db.transaction(async (tx: any) => {
+        await tx
+          .delete(notificationLogs)
+          .where(inArray(notificationLogs.messageId, ids));
+        await tx.delete(messages).where(inArray(messages.id, ids));
+      });
+      return { success: true, deleted: ids.length };
+    }),
+
+  deleteConversations: protectedProcedure
+    .input(z.object({ conversationIds: z.array(z.number()).min(1).max(100) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Banco de dados indisponível");
+      const owned = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.userId, ctx.user.id),
+            inArray(conversations.id, input.conversationIds)
+          )
+        );
+      const ids = owned.map((item: { id: number }) => item.id);
+      if (!ids.length) throw new Error("Nenhuma conversa encontrada");
+      await db.transaction(async (tx: any) => {
+        await tx.delete(messages).where(inArray(messages.conversationId, ids));
+        await tx
+          .delete(notificationLogs)
+          .where(inArray(notificationLogs.conversationId, ids));
+        await tx
+          .update(deals)
+          .set({ conversationId: null, updatedAt: new Date() })
+          .where(inArray(deals.conversationId, ids));
+        await tx.delete(conversations).where(inArray(conversations.id, ids));
+      });
+      return { success: true, deleted: ids.length };
     }),
 
   /**
